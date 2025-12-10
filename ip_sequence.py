@@ -45,7 +45,7 @@ class DualRobotController:
         self.table_stop_threshold = 0.3799
         self.rotation_joint = "idx1_r_joint"
         self.rotation_vel = -1.0
-        self.rotation_stop_threshold = -44.98
+        self.rotation_stop_threshold = np.deg2rad(-44.98)
 
         self.robot_1 = Articulation(self.root_1)
         self.robot_2 = Articulation(self.root_2)
