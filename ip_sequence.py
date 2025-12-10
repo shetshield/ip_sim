@@ -19,10 +19,11 @@ class DualRobotController:
         self.world_root = "/World/ip_model/ip_model"
 
         # Robot Paths
-        self.root_1 = self.world_root + "/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/tn__AR070PRN150010NNV3EL211_jONg6No0QW3AEIKNlHm2/tn__AR070PRN150010NNV3EL_03_VY0AEIKN" 
+        self.root_1 = self.world_root + "/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/tn__AR070PRN150010NNV3EL211_jONg6No0QW3AEIKNlHm2/tn__AR070PRN150010NNV3EL_03_VY0AEIKN"
         self.root_2 = self.world_root + "/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/tn__MY1C25400L6LZ7311_XIHq4d0W2DfBh1"
+        self.table_root = self.world_root + "/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/tn__MY1C25400L6LZ7311_XIHq4d0W2DfBh1/tn___MY1C250_TABLE_nIP/tn___MY1C250_TABLE_nIP"
 
-        # [Prim Path]
+        # [Surface Gripper Prim Path]
         self.sg_prim_path = \
             "/World/SurfaceGripper"
         
@@ -38,13 +39,17 @@ class DualRobotController:
         self.hold_duration = 0.5
         self.up_vel_2 = 0.3
         self.position_tolerance = 1e-3
+        self.table_joint = "Body_Table_p_joint"
+        self.table_up_vel = 0.5
+        self.table_stop_threshold = 0.37
 
         self.robot_1 = Articulation(self.root_1)
         self.robot_2 = Articulation(self.root_2)
+        self.table = Articulation(self.table_root)
         self.subset_1 = ArticulationSubset(self.robot_1, [self.joint_1])
         self.subset_2 = ArticulationSubset(self.robot_2, [self.joint_2])
+        self.table_subset = ArticulationSubset(self.table, [self.table_joint])
         self.stage = omni.usd.get_context().get_stage()
-
         self.reset_logic()
         print("Controller Ready: Wait-Verify-Move Logic")
 
@@ -61,6 +66,8 @@ class DualRobotController:
         self.unlock_triggered = False
         self.hold_pos_1 = None
         self.hold_pos_2 = None
+        self.table_hold_pos = None
+        self.table_motion_done = False
         self.initial_pos_1 = None
         self.initial_pos_2 = None
         
@@ -115,6 +122,9 @@ class DualRobotController:
         if not self.robot_2.handles_initialized:
             self.robot_2.initialize()
             needs_init = True
+        if not self.table.handles_initialized:
+            self.table.initialize()
+            needs_init = True
         
         if needs_init:
             self.reset_logic()
@@ -128,12 +138,22 @@ class DualRobotController:
             if ((time.time() - self.post_up_hold_start) >= self.hold_duration and not self.unlock_triggered):
                 self.unlock_axis()
                 self.unlock_triggered = True
+            if not self.table_motion_done:
+                curr_table = self.table_subset.get_joint_positions()[0]
+                if curr_table >= self.table_stop_threshold:
+                    self.table_motion_done = True
+                    self.table_hold_pos = curr_table
+                    self.table_subset.apply_action(joint_velocities=np.array([0.0]))
+                else:
+                    self.table_subset.apply_action(joint_velocities=np.array([self.table_up_vel]))
+            elif self.table_hold_pos is not None:
+                curr_table = self.table_subset.get_joint_positions()[0]
+                self.table_subset.apply_action(joint_velocities=np.array([(self.table_hold_pos - curr_table) * 10.0]))
             if self.hold_pos_1 is not None:
                 curr_1 = self.subset_1.get_joint_positions()[0]
                 self.subset_1.apply_action(joint_velocities=np.array([(self.hold_pos_1 - curr_1) * 10.0]))
             if self.hold_pos_2 is not None:
-                curr_2 = self.subset_2.get_joint_positions()[0]
-                self.subset_2.apply_action(joint_velocities=np.array([(self.hold_pos_2 - curr_2) * 10.0]))
+                curr_2 = self.subset_2.get_joint_positions()[0]                self.subset_2.apply_action(joint_velocities=np.array([(self.hold_pos_2 - curr_2) * 10.0]))
             return
 
         # [Phase 3] Suction Hold & Robot 2 Up
