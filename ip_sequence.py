@@ -35,7 +35,7 @@ class DualRobotController:
         self.vel_1 = -0.1
         self.threshold_1 = -0.022 - 0.02*2.6
         self.vel_2 = -0.3
-        self.threshold_2 = -0.04488
+        self.threshold_2 = -0.042
         self.hold_duration = 0.5
         self.up_vel_2 = 0.3
         self.position_tolerance = 1e-3
@@ -135,7 +135,7 @@ class DualRobotController:
         # 1. UpDn_p_joint 에 self.vel_2 할당
         if self.post_table_sequence_stage == 1:
             self.subset_2.apply_action(joint_velocities=np.array([self.vel_2]))
-            if current_pos_2 <= self.threshold_2:
+            if current_pos_2 <= self.threshold_2 + 0.02:
                 self.hold_pos_2 = current_pos_2
                 self.subset_2.apply_action(joint_velocities=np.array([0.0]))
                 self.post_table_sequence_stage = 2
