@@ -22,6 +22,7 @@ class DualRobotController:
         self.root_1 = self.world_root + "/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/tn__AR070PRN150010NNV3EL211_jONg6No0QW3AEIKNlHm2/tn__AR070PRN150010NNV3EL_03_VY0AEIKN"
         self.root_2 = self.world_root + "/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/tn__MY1C25400L6LZ7311_XIHq4d0W2DfBh1"
         self.table_root = self.world_root + "/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/tn__MY1C25400L6LZ7311_XIHq4d0W2DfBh1/tn___MY1C250_TABLE_nIP/tn___MY1C250_TABLE_nIP"
+        self.rotation_root = self.world_root + "/tn__NT251101A001_tCX59b7o0/tn__NT251101A101_tCX59b7o0/Rotation_Part"
 
         # [Surface Gripper Prim Path]
         self.sg_prim_path = \
@@ -42,14 +43,20 @@ class DualRobotController:
         self.table_joint = "Body_Table_p_joint"
         self.table_up_vel = 0.5
         self.table_stop_threshold = 0.3799
+        self.rotation_joint = "idx1_r_joint"
+        self.rotation_vel = -1.0
+        self.rotation_stop_threshold = -44.98
 
         self.robot_1 = Articulation(self.root_1)
         self.robot_2 = Articulation(self.root_2)
         self.table = Articulation(self.table_root)
+        self.rotation = Articulation(self.rotation_root)
         self.subset_1 = ArticulationSubset(self.robot_1, [self.joint_1])
         self.subset_2 = ArticulationSubset(self.robot_2, [self.joint_2])
         self.table_subset = ArticulationSubset(self.table, [self.table_joint])
+        self.rotation_subset = ArticulationSubset(self.rotation, [self.rotation_joint])
         self.stage = omni.usd.get_context().get_stage()
+
         self.reset_logic()
         print("Controller Ready: Wait-Verify-Move Logic")
 
@@ -71,8 +78,11 @@ class DualRobotController:
         self.initial_pos_1 = None
         self.initial_pos_2 = None
         self.post_table_sequence_stage = 0
-        self.post_table_stage_start = None        
-        
+        self.post_table_stage_start = None
+        self.rotation_hold_start = None
+        self.rotation_hold_pos = None
+        self.rotation_done = False
+
         # 초기화 시 열기
         self.send_gripper_command(False)
 
@@ -193,6 +203,27 @@ class DualRobotController:
             if self.table_hold_pos is not None:
                 self.table_subset.apply_action(joint_velocities=np.array([(self.table_hold_pos - curr_table) * 10.0]))
 
+            current_rotation = self.rotation_subset.get_joint_positions()[0]
+
+            if self.rotation_done:
+                if self.rotation_hold_pos is not None:
+                    self.rotation_subset.apply_action(
+                        joint_velocities=np.array([(self.rotation_hold_pos - current_rotation) * 10.0])
+                    )
+                return
+
+            if current_rotation <= self.rotation_stop_threshold:
+                self.rotation_subset.apply_action(joint_velocities=np.array([0.0]))
+
+                if self.rotation_hold_start is None:
+                    self.rotation_hold_start = time.time()
+                    self.rotation_hold_pos = current_rotation
+
+                if (time.time() - self.rotation_hold_start) >= self.hold_duration:
+                    self.rotation_done = True
+            else:
+                self.rotation_subset.apply_action(joint_velocities=np.array([self.rotation_vel]))
+
     def step(self):
         needs_init = False
         if not self.robot_1.handles_initialized:
@@ -203,6 +234,9 @@ class DualRobotController:
             needs_init = True
         if not self.table.handles_initialized:
             self.table.initialize()
+            needs_init = True
+        if not self.rotation.handles_initialized:
+            self.rotation.initialize()
             needs_init = True
         
         if needs_init:
