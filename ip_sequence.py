@@ -27,7 +27,10 @@ class DualRobotController:
         # [Surface Gripper Prim Path]
         self.sg_prim_path = \
             "/World/SurfaceGripper"
-        
+
+        # 별도로 동작하는 Surface Gripper Prim Path
+        self.mold_sg_prim_path = "/World/mold_sg"
+
         self.unlock_target_path = self.world_root + "/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/tn__moldACAP_23_mG6"
         
         # Settings
@@ -82,9 +85,13 @@ class DualRobotController:
         self.rotation_hold_start = None
         self.rotation_hold_pos = None
         self.rotation_done = False
+        self.rotation_started = False
+        self.mold_gripper_closed = False
+        self.mold_gripper_released = False
 
         # 초기화 시 열기
         self.send_gripper_command(False)
+        self.send_mold_gripper_command(False)
 
         prim = self.stage.GetPrimAtPath(self.unlock_target_path)
         if prim.IsValid():
@@ -117,6 +124,21 @@ class DualRobotController:
                 print(f">>> [Command] OPEN Signal Sent.")
         except Exception as e:
             print(f"[ERROR] Gripper Command Failed: {e}")
+
+    def send_mold_gripper_command(self, close: bool):
+        """/World/mold_sg 전용 Surface Gripper 제어"""
+        if not IS_INTERFACE_AVAILABLE or sg_interface is None:
+            return
+
+        try:
+            if close:
+                sg_interface.close_gripper(self.mold_sg_prim_path)
+                print(">>> [Mold SG Command] CLOSE Signal Sent.")
+            else:
+                sg_interface.open_gripper(self.mold_sg_prim_path)
+                print(">>> [Mold SG Command] OPEN Signal Sent.")
+        except Exception as e:
+            print(f"[ERROR] Mold Gripper Command Failed: {e}")
 
     def get_gripper_status(self):
         """현재 그리퍼의 실제 상태(Closed/Open)를 Attribute에서 읽어옴"""
@@ -205,7 +227,16 @@ class DualRobotController:
 
             current_rotation = self.rotation_subset.get_joint_positions()[0]
 
+            if not self.rotation_started:
+                self.send_mold_gripper_command(True)
+                self.rotation_started = True
+                self.mold_gripper_closed = True
+
             if self.rotation_done:
+                if self.mold_gripper_closed and not self.mold_gripper_released:
+                    self.send_mold_gripper_command(False)
+                    self.mold_gripper_released = True
+
                 if self.rotation_hold_pos is not None:
                     self.rotation_subset.apply_action(
                         joint_velocities=np.array([(self.rotation_hold_pos - current_rotation) * 10.0])
