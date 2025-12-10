@@ -2,6 +2,7 @@ import omni.graph.core as og
 from omni.isaac.core.articulations import Articulation, ArticulationSubset
 import numpy as np
 import omni.usd
+import time
 
 class DualRobotController:
     def __init__(self):
@@ -27,7 +28,8 @@ class DualRobotController:
         self.threshold_1 = -0.022 - 0.02*2.6
         
         self.vel_2 = -0.3
-        self.threshold_2 = -0.043 
+        self.threshold_2 = -0.043
+        self.hold_duration = 0.5
         # ---------------------------------------------------------
 
         self.robot_1 = Articulation(self.root_1)
@@ -44,12 +46,14 @@ class DualRobotController:
     def reset_logic(self):
         self.phase_1_done = False
         self.phase_2_done = False
+        self.phase_1_hold_start = None
+        self.phase_2_hold_start = None
+        self.unlock_triggered = False
         self.hold_pos_1 = None
         self.hold_pos_2 = None
         prim = self.stage.GetPrimAtPath(self.unlock_target_path)
         attr = prim.GetAttribute("physxRigidBody:lockedPosAxis")
         attr.Set(3) # X, Y 잠금
-        print(">>> RESET: Logic variables have been reset. <<<")
 
     def unlock_axis(self):
         """지정된 Prim의 X, Y 축 잠금을 해제하는 함수"""
@@ -88,10 +92,18 @@ class DualRobotController:
 
         # [Phase 3] Unlock & Hold Both
         if self.phase_2_done:
+            if (
+                self.phase_2_hold_start is not None
+                and (time.time() - self.phase_2_hold_start) >= self.hold_duration
+                and not self.unlock_triggered
+            ):
+                self.unlock_axis()
+                self.unlock_triggered = True
+
             if self.hold_pos_1 is not None:
                 curr_1 = self.subset_1.get_joint_positions()[0]
                 self.subset_1.apply_action(joint_velocities=np.array([(self.hold_pos_1 - curr_1) * 10.0]))
-            
+
             if self.hold_pos_2 is not None:
                 curr_2 = self.subset_2.get_joint_positions()[0]
                 self.subset_2.apply_action(joint_velocities=np.array([(self.hold_pos_2 - curr_2) * 10.0]))
@@ -105,14 +117,19 @@ class DualRobotController:
 
             current_pos_2 = self.subset_2.get_joint_positions()[0]
 
+            if (
+                self.phase_1_hold_start is not None
+                and (time.time() - self.phase_1_hold_start) < self.hold_duration
+            ):
+                self.subset_2.apply_action(joint_velocities=np.array([0.0]))
+                return
+
             if current_pos_2 <= self.threshold_2:
                 print(f"!!! Phase 2 Done. Robot 2 Reached {current_pos_2:.4f} !!!")
                 self.phase_2_done = True
+                self.phase_2_hold_start = time.time()
                 self.hold_pos_2 = current_pos_2
                 self.subset_2.apply_action(joint_velocities=np.array([0.0]))
-                
-                # Unlock 함수 호출
-                self.unlock_axis()
             else:
                 self.subset_2.apply_action(joint_velocities=np.array([self.vel_2]))
             return
@@ -123,6 +140,7 @@ class DualRobotController:
         if current_pos_1 <= self.threshold_1:
             print(f"!!! Phase 1 Done. Holding {self.joint_1}, Moving {self.joint_2} !!!")
             self.phase_1_done = True
+            self.phase_1_hold_start = time.time()
             self.hold_pos_1 = current_pos_1
             self.subset_1.apply_action(joint_velocities=np.array([0.0]))
         else:
