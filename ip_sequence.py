@@ -35,13 +35,13 @@ class DualRobotController:
         self.vel_1 = -0.1
         self.threshold_1 = -0.022 - 0.02*2.6
         self.vel_2 = -0.3
-        self.threshold_2 = -0.043
+        self.threshold_2 = -0.04488
         self.hold_duration = 0.5
         self.up_vel_2 = 0.3
         self.position_tolerance = 1e-3
         self.table_joint = "Body_Table_p_joint"
         self.table_up_vel = 0.5
-        self.table_stop_threshold = 0.37
+        self.table_stop_threshold = 0.3799
 
         self.robot_1 = Articulation(self.root_1)
         self.robot_2 = Articulation(self.root_2)
@@ -70,6 +70,8 @@ class DualRobotController:
         self.table_motion_done = False
         self.initial_pos_1 = None
         self.initial_pos_2 = None
+        self.post_table_sequence_stage = 0
+        self.post_table_stage_start = None        
         
         # 초기화 시 열기
         self.send_gripper_command(False)
@@ -114,6 +116,77 @@ class DualRobotController:
         attr = prim.GetAttribute("isaac:status")
         return attr.Get() if attr.IsValid() else "Unknown"
 
+    def _post_table_stage_elapsed(self):
+        if self.post_table_stage_start is None:
+            self.post_table_stage_start = time.time()
+            return False
+        return (time.time() - self.post_table_stage_start) >= self.hold_duration
+
+    def run_post_table_sequence(self):
+        # Sequence starts after Body_Table_p_joint reaches stop threshold
+        curr_table = self.table_subset.get_joint_positions()[0]
+        current_pos_2 = self.subset_2.get_joint_positions()[0]
+
+        if self.post_table_sequence_stage == 0:
+            if self.table_hold_pos is not None:
+                self.table_subset.apply_action(joint_velocities=np.array([(self.table_hold_pos - curr_table) * 10.0]))
+            return
+
+        # 1. UpDn_p_joint 에 self.vel_2 할당
+        if self.post_table_sequence_stage == 1:
+            self.subset_2.apply_action(joint_velocities=np.array([self.vel_2]))
+            if current_pos_2 <= self.threshold_2:
+                self.hold_pos_2 = current_pos_2
+                self.subset_2.apply_action(joint_velocities=np.array([0.0]))
+                self.post_table_sequence_stage = 2
+                self.post_table_stage_start = time.time()
+            return
+
+        # 2. self.threshold_2 도달 후 hold_duration 대기, 그 후 Surface Gripper Open
+        if self.post_table_sequence_stage == 2:
+            if self._post_table_stage_elapsed():
+                self.send_gripper_command(False)
+                self.post_table_sequence_stage = 3
+                self.post_table_stage_start = time.time()
+            return
+
+        # 3. hold_duration 후 UpDn_p_joint 에 self.up_vel_2 할당
+        if self.post_table_sequence_stage == 3:
+            if self._post_table_stage_elapsed():
+                self.post_table_sequence_stage = 4
+                self.post_table_stage_start = None
+            return
+
+        if self.post_table_sequence_stage == 4:
+            self.subset_2.apply_action(joint_velocities=np.array([self.up_vel_2]))
+            if (self.initial_pos_2 is not None and current_pos_2 >= self.initial_pos_2 - self.position_tolerance):
+                self.hold_pos_2 = self.initial_pos_2
+                self.subset_2.apply_action(joint_velocities=np.array([0.0]))
+                self.post_table_sequence_stage = 5
+                self.post_table_stage_start = time.time()
+            return
+
+        # 4. fully up 이후 hold_duration 대기 후 테이블 내려가기 시작
+        if self.post_table_sequence_stage == 5:
+            if self._post_table_stage_elapsed():
+                self.post_table_sequence_stage = 6
+            return
+
+        # 5. Body_Table_p_joint 에 -self.table_up_val 적용하여 원위치 복귀
+        if self.post_table_sequence_stage == 6:
+            if curr_table <= self.position_tolerance:
+                self.table_subset.apply_action(joint_velocities=np.array([0.0]))
+                self.table_hold_pos = 0.0
+                self.post_table_sequence_stage = 7
+            else:
+                self.table_subset.apply_action(joint_velocities=np.array([-self.table_up_val]))
+            return
+
+        # 6. 완료 후 위치 유지
+        if self.post_table_sequence_stage >= 7:
+            if self.table_hold_pos is not None:
+                self.table_subset.apply_action(joint_velocities=np.array([(self.table_hold_pos - curr_table) * 10.0]))
+
     def step(self):
         needs_init = False
         if not self.robot_1.handles_initialized:
@@ -144,16 +217,18 @@ class DualRobotController:
                     self.table_motion_done = True
                     self.table_hold_pos = curr_table
                     self.table_subset.apply_action(joint_velocities=np.array([0.0]))
+                    self.post_table_sequence_stage = 1
+                    self.post_table_stage_start = None
                 else:
                     self.table_subset.apply_action(joint_velocities=np.array([self.table_up_vel]))
-            elif self.table_hold_pos is not None:
-                curr_table = self.table_subset.get_joint_positions()[0]
-                self.table_subset.apply_action(joint_velocities=np.array([(self.table_hold_pos - curr_table) * 10.0]))
+            else:
+                self.run_post_table_sequence()
             if self.hold_pos_1 is not None:
                 curr_1 = self.subset_1.get_joint_positions()[0]
                 self.subset_1.apply_action(joint_velocities=np.array([(self.hold_pos_1 - curr_1) * 10.0]))
-            if self.hold_pos_2 is not None:
-                curr_2 = self.subset_2.get_joint_positions()[0]                self.subset_2.apply_action(joint_velocities=np.array([(self.hold_pos_2 - curr_2) * 10.0]))
+            if self.hold_pos_2 is not None and not (self.post_table_sequence_stage in [1, 4]):
+                curr_2 = self.subset_2.get_joint_positions()[0]
+                self.subset_2.apply_action(joint_velocities=np.array([(self.hold_pos_2 - curr_2) * 10.0]))
             return
 
         # [Phase 3] Suction Hold & Robot 2 Up
