@@ -179,7 +179,7 @@ class DualRobotController:
                 self.table_hold_pos = 0.0
                 self.post_table_sequence_stage = 7
             else:
-                self.table_subset.apply_action(joint_velocities=np.array([-self.table_up_val]))
+                self.table_subset.apply_action(joint_velocities=np.array([-self.table_up_vel]))
             return
 
         # 6. 완료 후 위치 유지
@@ -323,3 +323,4 @@ def compute(db: og.Database):
     if hasattr(db.per_instance_state, "controller"):
         db.per_instance_state.controller.step()
     return True
+
