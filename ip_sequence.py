@@ -158,9 +158,15 @@ class DualRobotController:
             return
 
         if self.post_table_sequence_stage == 4:
-            self.subset_2.apply_action(joint_velocities=np.array([self.up_vel_2]))
-            if (self.initial_pos_2 is not None and current_pos_2 >= self.initial_pos_2 - self.position_tolerance):
-                self.hold_pos_2 = self.initial_pos_2
+            target_pos = self.initial_pos_2 if self.initial_pos_2 is not None else 0.0
+            error = target_pos - current_pos_2
+
+            # Use a simple proportional controller to pull the joint back to its start position.
+            # This avoids getting stuck slightly below zero with only a constant velocity command.
+            self.subset_2.apply_action(joint_velocities=np.array([error * 10.0]))
+
+            if abs(error) <= self.position_tolerance:
+                self.hold_pos_2 = target_pos
                 self.subset_2.apply_action(joint_velocities=np.array([0.0]))
                 self.post_table_sequence_stage = 5
                 self.post_table_stage_start = time.time()
@@ -172,7 +178,7 @@ class DualRobotController:
                 self.post_table_sequence_stage = 6
             return
 
-        # 5. Body_Table_p_joint 에 -self.table_up_val 적용하여 원위치 복귀
+        # 5. Body_Table_p_joint 에 -self.table_up_vel 적용하여 원위치 복귀
         if self.post_table_sequence_stage == 6:
             if curr_table <= self.position_tolerance:
                 self.table_subset.apply_action(joint_velocities=np.array([0.0]))
@@ -323,4 +329,3 @@ def compute(db: og.Database):
     if hasattr(db.per_instance_state, "controller"):
         db.per_instance_state.controller.step()
     return True
-
