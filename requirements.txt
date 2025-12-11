@@ -1,0 +1,6 @@
+# Isaac Sim Python Requirements
+# Note: Isaac Sim comes with its own Python environment
+# These are additional dependencies for the simulation
+
+numpy>=1.21.0
+pyyaml>=5.4.0

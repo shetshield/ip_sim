@@ -1,0 +1,57 @@
+# IP Equipment Simulation Configuration
+# 로봇-장비 4차년도 IP 장비 시뮬레이션 설정
+
+simulation:
+  # Run simulation without GUI
+  headless: false
+  
+  # Physics timestep (seconds)
+  physics_dt: 0.016666667  # 60 Hz
+  
+  # Rendering timestep (seconds)
+  rendering_dt: 0.016666667  # 60 Hz
+  
+  # Simulation duration (seconds, null for infinite)
+  duration: null
+
+scene:
+  # Enable ground plane
+  ground_plane: true
+  
+  # Lighting setup
+  lighting: default
+  
+  # Camera settings
+  camera:
+    position: [5.0, 5.0, 3.0]
+    target: [0.0, 0.0, 0.0]
+
+equipment:
+  # Equipment type identifier
+  type: ip_robot
+  
+  # Initial position [x, y, z] in meters
+  position: [0.0, 0.0, 0.0]
+  
+  # Initial orientation as quaternion [x, y, z, w]
+  orientation: [0.0, 0.0, 0.0, 1.0]
+  
+  # Equipment scale
+  scale: 1.0
+  
+  # USD model path (relative to scenes directory)
+  model_path: null
+
+physics:
+  # Enable physics simulation
+  enabled: true
+  
+  # Gravity [x, y, z] in m/s²
+  gravity: [0.0, 0.0, -9.81]
+
+controller:
+  # Control frequency (Hz)
+  frequency: 100
+  
+  # Controller type
+  type: position
