@@ -28,6 +28,10 @@ class DualRobotController:
             self.world_root + "/tn__NT251101A001_tCX59b7o0/tn__NT251101A3011_uDDl3V0l19d9V1/Lid_Assem_Table"
         )
         self.assembly_rotation_root = self.world_root + "/tn__NT251101A001_tCX59b7o0/tn__NT251101A3011_uDDl3V0l19d9V1/rot"
+        self.lid_assy_damping_attr_path = (
+            "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__NT251101A3011_uDDl3V0l19d9V1/"
+            "Lid_Assem_Table/Moving/Lid_Assy_p_joint.drive:linear:physics:damping"
+        )
 
         # [Surface Gripper Prim Path]
         self.sg_prim_path = \
@@ -129,6 +133,8 @@ class DualRobotController:
         self.assembly_gripper_closed = False
         self.assembly_gripper_released = False
 
+        self._set_lid_assy_damping(1e3)
+
         cone_prim = self.stage.GetPrimAtPath(self.cone_prim_path)
         if cone_prim.IsValid():
             rigid_body_attr = cone_prim.GetAttribute("physics:rigidBodyEnabled")
@@ -221,6 +227,12 @@ class DualRobotController:
             self.post_table_stage_start = time.time()
             return False
         return (time.time() - self.post_table_stage_start) >= self.hold_duration
+
+    def _set_lid_assy_damping(self, damping_value: float):
+        """Safely set the lid assembly joint damping attribute if it exists."""
+        damping_attr = self.stage.GetAttributeAtPath(self.lid_assy_damping_attr_path)
+        if damping_attr and damping_attr.IsValid():
+            damping_attr.Set(damping_value)
 
     def run_post_table_sequence(self):
         # Sequence starts after Body_Table_p_joint reaches stop threshold
@@ -421,6 +433,7 @@ class DualRobotController:
                 self.assembly_gripper_closed = True
                 self.assembly_stage_start = time.time()
             elif (self.assembly_stage_start is not None) and self._assembly_stage_elapsed():
+                self._set_lid_assy_damping(1e5)
                 self.assembly_sequence_stage = 4
                 self.assembly_stage_start = None
             return
@@ -431,9 +444,8 @@ class DualRobotController:
                 self.lid_assy_second_stop, self.lid_assy_speed
             )
             self.assembly_rotation_subset.apply_action(
-                joint_velocities=np.array([self.assembly_rotation_speed])
+                joint_velocities=np.array([0.5*self.assembly_rotation_speed])
             )
-            print(f"lid_pos: {lid_pos:.4f}, {self.lid_assy_second_stop}")
 
             if self.assembly_stage_start is None:
                 self.assembly_stage_start = time.time()
