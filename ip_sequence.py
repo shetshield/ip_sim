@@ -43,6 +43,11 @@ class DualRobotController:
             "tn__NT251101A101_tCX59b7o0/tn__moldA181_k88X2Lu0a6i0/mold/mold/Cylinder_01"
         )
 
+        self.assembly_gripper_cylinder_path = (
+            "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/"
+            "tn__NT251101A3011_uDDl3V0l19d9V1/gripper/Cylinder"
+        )
+
         self.cone_prim_path = (
             "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__HA980DW1_l8d3o4Z0/"
             "tn__HA980DWHOPPER1_xEt58c8u0/Cone/pd"
@@ -71,7 +76,7 @@ class DualRobotController:
         self.lid_assy_kp = 5.0
         self.lid_assy_first_stop = 0.56
         self.lid_assy_second_stop = 0.7
-        self.assembly_move_timeout = 3.0
+        self.assembly_move_timeout = 2.0
         self.assembly_rotation_joint = "Assy_Assem_r_joint"
         self.assembly_rotation_speed = 15.0
 
@@ -134,6 +139,12 @@ class DualRobotController:
         self.send_gripper_command(False)
         self.send_mold_gripper_command(False)
         self.send_assembly_gripper_command(False)
+
+        assembly_gripper_cylinder_prim = self.stage.GetPrimAtPath(self.assembly_gripper_cylinder_path)
+        if assembly_gripper_cylinder_prim.IsValid():
+            collision_attr = assembly_gripper_cylinder_prim.GetAttribute("physics:collisionEnabled")
+            if collision_attr and collision_attr.IsValid():
+                collision_attr.Set(True)
 
         prim = self.stage.GetPrimAtPath(self.unlock_target_path)
         if prim.IsValid():
@@ -424,13 +435,21 @@ class DualRobotController:
             )
             print(f"lid_pos: {lid_pos:.4f}, {self.lid_assy_second_stop}")
 
-            if reached_target:
+            if self.assembly_stage_start is None:
+                self.assembly_stage_start = time.time()
+
+            # Fall back after a timeout so the sequence can continue even if the
+            # prismatic joint is unable to reach its target (e.g. due to
+            # collisions or limits).
+            elapsed = time.time() - self.assembly_stage_start
+
+            if reached_target or elapsed >= 2*self.assembly_move_timeout:
                 self.lid_assy_hold_pos = self.lid_assy_subset.get_joint_positions()[0]
                 self.assembly_rotation_hold_pos = assembly_rot_pos
                 self.lid_assy_subset.apply_action(joint_velocities=np.array([0.0]))
                 self.assembly_rotation_subset.apply_action(joint_velocities=np.array([0.0]))
                 self.assembly_sequence_stage = 5
-                self.assembly_stage_start = time.time()
+                self.assembly_stage_start = None
             return
 
         # 5. Stop rotation, open gripper, hold for hold_duration
@@ -441,6 +460,11 @@ class DualRobotController:
             if not self.assembly_gripper_released:
                 self.send_assembly_gripper_command(False)
                 self.assembly_gripper_released = True
+                assembly_gripper_cylinder_prim = self.stage.GetPrimAtPath(self.assembly_gripper_cylinder_path)
+                if assembly_gripper_cylinder_prim.IsValid():
+                    collision_attr = assembly_gripper_cylinder_prim.GetAttribute("physics:collisionEnabled")
+                    if collision_attr and collision_attr.IsValid():
+                        collision_attr.Set(False)
                 if self.assembly_stage_start is None:
                     self.assembly_stage_start = time.time()
 
