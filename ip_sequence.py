@@ -510,15 +510,15 @@ class DualRobotController:
 
                     if source_translate is not None:
                         xform_api = UsdGeom.XformCommonAPI(target_prim)
-                        print(f"{xform_api} & here3")
+                        # print(f"{xform_api} & here3")
                         # if xform_api:
-                        print("here4")
+                        # print("here4")
                         translate = xform_api.GetXformVectors(Usd.TimeCode.Default())
                         target_y = translate[1] if translate is not None else 0.0
 
                         new_translate = (source_translate[0], target_y, source_translate[2])
                         # Use XformCommonAPI to ensure translate is applied correctly even when a matrix op is present.
-                        xform_api.SetTranslate(new_translate)
+                        xform_api.SetTranslate(Gf.Vec3d(*new_translate))
 
                         # Keep the debug print for visibility when running in headless mode.
                         updated_translate = xform_api.GetXformVectors(Usd.TimeCode.Default())
