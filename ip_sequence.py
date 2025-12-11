@@ -500,27 +500,33 @@ class DualRobotController:
                     "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/"
                     "tn__NT251101A101_tCX59b7o0/tn__moldA181_k88X2Lu0a6i0/mold.xformOp:translate"
                 )
-                target_translate_attr = self.stage.GetAttributeAtPath(
+                target_prim = self.stage.GetPrimAtPath(
                     "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/"
-                    "tn__moldACAP_23_mG6.xformOp:translate"
+                    "tn__moldACAP_23_mG6"
                 )
 
-                if source_translate_attr and source_translate_attr.IsValid():
+                if source_translate_attr and source_translate_attr.IsValid() and target_prim.IsValid():
                     source_translate = source_translate_attr.Get()
+                    print("here1")
 
-                    if source_translate is not None and target_translate_attr and target_translate_attr.IsValid():
-                        target_translate = target_translate_attr.Get()
-                        if target_translate is None:
-                            target_translate = Gf.Vec3d(0.0, 0.0, 0.0)
+                    if source_translate is not None:
+                        print("here2")
+                        xform_api = UsdGeom.XformCommonAPI(target_prim)
+                        print(f"{xform_api} & here3")
+                        if xform_api:
+                            print("here4")
+                            target_translate = xform_api.GetTranslateAttr().Get()
+                            if target_translate is None:
+                                target_translate = Gf.Vec3d(0.0, 0.0, 0.0)
 
-                        target_y = target_translate[1]
-                        new_translate = Gf.Vec3d(source_translate[0], target_y, source_translate[2])
-                        # Use USD API directly so transform changes are reflected in the UI immediately.
-                        target_translate_attr.Set(new_translate)
+                            target_y = target_translate[1]
+                            new_translate = (source_translate[0], target_y, source_translate[2])
+                            # Use XformCommonAPI to ensure translate is applied correctly even when a matrix op is present.
+                            xform_api.SetTranslate(new_translate)
 
-                        # Keep the debug print for visibility when running in headless mode.
-                        updated_translate = target_translate_attr.Get()
-                        print(f"{source_translate}, & {target_translate}, & {updated_translate}")
+                            # Keep the debug print for visibility when running in headless mode.
+                            updated_translate = xform_api.GetTranslateAttr().Get()
+                            print(f"{source_translate}, & {target_translate}, & {updated_translate}")
                 self.assembly_gripper_released = True
 
                 if self.assembly_stage_start is None:
