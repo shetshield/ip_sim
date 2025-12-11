@@ -68,6 +68,7 @@ class DualRobotController:
         self.rotation_max_speed = 1.0
         self.lid_assy_joint = "Lid_Assy_p_joint"
         self.lid_assy_speed = 0.1
+        self.lid_assy_kp = 5.0
         self.lid_assy_first_stop = 0.56
         self.lid_assy_second_stop = 0.7
         self.assembly_move_timeout = 3.0
@@ -349,6 +350,14 @@ class DualRobotController:
                 joint_velocities=np.array([(self.lid_assy_hold_pos - current_pos) * 10.0])
             )
 
+    def _command_lid_assy_to_target(self, target_pos, max_speed):
+        """Drive the lid assembly joint toward a target using a saturated P controller."""
+        current_pos = self.lid_assy_subset.get_joint_positions()[0]
+        error = target_pos - current_pos
+        commanded = np.clip(error * self.lid_assy_kp, -max_speed, max_speed)
+        self.lid_assy_subset.apply_action(joint_velocities=np.array([commanded]))
+        return current_pos, abs(error) <= self.position_tolerance
+
     def _hold_assembly_rotation(self, current_rot):
         if self.assembly_rotation_hold_pos is not None:
             self.assembly_rotation_subset.apply_action(
@@ -367,14 +376,14 @@ class DualRobotController:
 
         # 1. Move to 0.56 with velocity 0.1
         if self.assembly_sequence_stage == 1:
+            _, reached = self._command_lid_assy_to_target(self.lid_assy_first_stop, self.lid_assy_speed)
+
             if self.assembly_stage_start is None:
                 self.assembly_stage_start = time.time()
 
-            self.lid_assy_subset.apply_action(joint_velocities=np.array([self.lid_assy_speed]))
-
             elapsed = time.time() - self.assembly_stage_start
-            if lid_pos >= self.lid_assy_first_stop - self.position_tolerance or elapsed >= self.assembly_move_timeout:
-                self.lid_assy_hold_pos = lid_pos
+            if reached or elapsed >= self.assembly_move_timeout:
+                self.lid_assy_hold_pos = self.lid_assy_subset.get_joint_positions()[0]
                 self.lid_assy_subset.apply_action(joint_velocities=np.array([0.0]))
                 self.assembly_stage_start = time.time()
                 self.assembly_sequence_stage = 2
@@ -407,14 +416,16 @@ class DualRobotController:
 
         # 4. Move to 0.7 while rotating assembly joint at speed 15
         if self.assembly_sequence_stage == 4:
-            self.lid_assy_subset.apply_action(joint_velocities=np.array([self.lid_assy_speed]))
+            lid_pos, reached_target = self._command_lid_assy_to_target(
+                self.lid_assy_second_stop, self.lid_assy_speed
+            )
             self.assembly_rotation_subset.apply_action(
                 joint_velocities=np.array([self.assembly_rotation_speed])
             )
             print(f"lid_pos: {lid_pos:.4f}, {self.lid_assy_second_stop}")
 
-            if lid_pos >= self.lid_assy_second_stop - self.position_tolerance:
-                self.lid_assy_hold_pos = lid_pos
+            if reached_target:
+                self.lid_assy_hold_pos = self.lid_assy_subset.get_joint_positions()[0]
                 self.assembly_rotation_hold_pos = assembly_rot_pos
                 self.lid_assy_subset.apply_action(joint_velocities=np.array([0.0]))
                 self.assembly_rotation_subset.apply_action(joint_velocities=np.array([0.0]))
