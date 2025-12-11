@@ -519,18 +519,13 @@ class DualRobotController:
                         xformable = UsdGeom.Xformable(target_prim)
                         ordered_ops = xformable.GetOrderedXformOps()
 
-                        # If a matrix xformOp:transform exists, update its translation directly to keep the UI consistent.
-                        transform_ops = [op for op in ordered_ops if op.GetOpType() == UsdGeom.XformOp.TypeTransform]
+                        # Prefer updating an explicit translate op when a matrix xformOp:transform is not present.
+                        translate_ops = [op for op in ordered_ops if op.GetOpType() == UsdGeom.XformOp.TypeTranslate]
 
-                        if transform_ops:
-                            matrix = transform_ops[0].GetOpTransform(Usd.TimeCode.Default())
-
-                            # Translation for matrix-based ops lives in the last column rather than the last row.
-                            # Update that column so the transform op actually moves the prim.
-                            matrix.SetColumn(3, Gf.Vec4d(*new_translate, matrix[3][3]))
-                            transform_ops[0].Set(matrix, Usd.TimeCode.Default())
+                        if translate_ops:
+                            translate_ops[0].Set(Gf.Vec3d(*new_translate), Usd.TimeCode.Default())
                         else:
-                            # Use XformCommonAPI to ensure translate is applied correctly when only TRS ops are present.
+                            # Fallback to XformCommonAPI to ensure translate is applied when only TRS ops are present.
                             xform_api.SetTranslate(Gf.Vec3d(*new_translate))
 
                         # Keep the debug print for visibility when running in headless mode.
