@@ -510,11 +510,9 @@ class DualRobotController:
 
                     if source_translate is not None:
                         xform_api = UsdGeom.XformCommonAPI(target_prim)
-                        # print(f"{xform_api} & here3")
-                        # if xform_api:
-                        # print("here4")
-                        translate = xform_api.GetXformVectors(Usd.TimeCode.Default())
-                        target_y = translate[1] if translate is not None else 0.0
+                        xform_vectors = xform_api.GetXformVectors(Usd.TimeCode.Default())
+                        target_translate = xform_vectors[0] if xform_vectors is not None else None
+                        target_y = target_translate[1] if target_translate is not None else 0.0
 
                         new_translate = (source_translate[0], target_y, source_translate[2])
                         # Use XformCommonAPI to ensure translate is applied correctly even when a matrix op is present.
@@ -522,7 +520,7 @@ class DualRobotController:
 
                         # Keep the debug print for visibility when running in headless mode.
                         updated_translate = xform_api.GetXformVectors(Usd.TimeCode.Default())
-                        print(f"{source_translate}, & {translate}, & {updated_translate}")
+                        print(f"{source_translate}, & {xform_vectors}, & {updated_translate}")
                 self.assembly_gripper_released = True
 
                 if self.assembly_stage_start is None:
