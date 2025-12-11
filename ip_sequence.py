@@ -511,7 +511,7 @@ class DualRobotController:
                         target_translate = target_translate_attr.Get()
                         target_y = target_translate[1] if target_translate is not None else 0.0
                         target_translate_attr.Set(Gf.Vec3d(source_translate[0], target_y, source_translate[2]))
-                        print(f"{source_translate}, & {target_translate}")
+                        print(f"{source_translate}, & {target_translate}, & {target_translate_attr.Get()}")
                 self.send_assembly_gripper_command(False)
                 self.assembly_gripper_released = True
 
