@@ -3,6 +3,7 @@ from omni.isaac.core.articulations import Articulation, ArticulationSubset
 import numpy as np
 import omni.usd
 import time
+from pxr import Gf
 
 # [Interface Import]
 try:
@@ -47,8 +48,10 @@ class DualRobotController:
         self.table_up_vel = 0.5
         self.table_stop_threshold = 0.3799
         self.rotation_joint = "idx1_r_joint"
-        self.rotation_vel = -1.0
-        self.rotation_stop_threshold = np.deg2rad(-44.98)
+        self.rotation_target = np.deg2rad(-45.0)
+        self.rotation_tolerance = np.deg2rad(0.05)
+        self.rotation_kp = 6.0
+        self.rotation_max_speed = 1.0
 
         self.robot_1 = Articulation(self.root_1)
         self.robot_2 = Articulation(self.root_2)
@@ -177,6 +180,20 @@ class DualRobotController:
         # 2. self.threshold_2 도달 후 hold_duration 대기, 그 후 Surface Gripper Open
         if self.post_table_sequence_stage == 2:
             if self._post_table_stage_elapsed():
+                prim = self.stage.GetPrimAtPath(
+                    "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__HA980DW1_l8d3o4Z0/tn__HA980DWHOPPER1_xEt58c8u0/Cone/pd"
+                )
+                if prim.IsValid():
+                    translate_attr = prim.GetAttribute("xformOp:translate")
+                    if translate_attr and translate_attr.IsValid():
+                        translate = translate_attr.Get()
+                        if translate is not None:
+                            translate_attr.Set(Gf.Vec3d(translate[0], 0.0, translate[2]))
+
+                    rigid_body_attr = prim.GetAttribute("physics:rigidBodyEnabled")
+                    if rigid_body_attr and rigid_body_attr.IsValid():
+                        rigid_body_attr.Set(False)
+
                 self.send_gripper_command(False)
                 self.post_table_sequence_stage = 3
                 self.post_table_stage_start = time.time()
@@ -243,7 +260,9 @@ class DualRobotController:
                     )
                 return
 
-            if current_rotation <= self.rotation_stop_threshold:
+            rotation_error = self.rotation_target - current_rotation
+
+            if abs(rotation_error) <= self.rotation_tolerance:
                 self.rotation_subset.apply_action(joint_velocities=np.array([0.0]))
 
                 if self.rotation_hold_start is None:
@@ -253,7 +272,14 @@ class DualRobotController:
                 if (time.time() - self.rotation_hold_start) >= self.hold_duration:
                     self.rotation_done = True
             else:
-                self.rotation_subset.apply_action(joint_velocities=np.array([self.rotation_vel]))
+                self.rotation_hold_start = None
+                self.rotation_hold_pos = None
+                commanded_speed = np.clip(
+                    rotation_error * self.rotation_kp,
+                    -self.rotation_max_speed,
+                    self.rotation_max_speed,
+                )
+                self.rotation_subset.apply_action(joint_velocities=np.array([commanded_speed]))
 
     def step(self):
         needs_init = False
