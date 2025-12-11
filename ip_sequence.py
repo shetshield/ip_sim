@@ -1,6 +1,7 @@
 import omni.graph.core as og
 from omni.isaac.core.articulations import Articulation, ArticulationSubset
 import numpy as np
+import omni.kit.commands
 import omni.usd
 import time
 from pxr import Gf
@@ -83,7 +84,7 @@ class DualRobotController:
         self.lid_assy_second_stop = 0.69
         self.assembly_move_timeout = 2.0
         self.assembly_rotation_joint = "Assy_Assem_r_joint"
-        self.assembly_rotation_speed = 15.0
+        self.assembly_rotation_speed = -15.0
 
         self.robot_1 = Articulation(self.root_1)
         self.robot_2 = Articulation(self.root_2)
@@ -510,9 +511,13 @@ class DualRobotController:
                     if source_translate is not None and target_translate_attr and target_translate_attr.IsValid():
                         target_translate = target_translate_attr.Get()
                         target_y = target_translate[1] if target_translate is not None else 0.0
-                        target_translate_attr.Set(Gf.Vec3d(source_translate[0], target_y, source_translate[2]))
-                        print(f"{source_translate}, & {target_translate}, & {target_translate_attr.Get()}")
-                self.send_assembly_gripper_command(False)
+                        new_translate = Gf.Vec3d(source_translate[0], target_y, source_translate[2])
+                        omni.kit.commands.execute(
+                            "ChangeProperty",
+                            prop_path=str(target_translate_attr.GetPath()),
+                            value=new_translate,
+                        )
+                        # print(f"{source_translate}, & {target_translate}, & {target_translate_attr.Get()}")
                 self.assembly_gripper_released = True
 
                 if self.assembly_stage_start is None:
