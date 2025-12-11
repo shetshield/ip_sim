@@ -515,13 +515,12 @@ class DualRobotController:
 
                         target_y = target_translate[1]
                         new_translate = Gf.Vec3d(source_translate[0], target_y, source_translate[2])
-                        omni.kit.commands.execute(
-                            "ChangeProperty",
-                            prop_path=str(target_translate_attr.GetPath()),
-                            value=new_translate,
-                            prev=target_translate,
-                        )
-                        print(f"{source_translate}, & {target_translate}, & {target_translate_attr.Get()}")
+                        # Use USD API directly so transform changes are reflected in the UI immediately.
+                        target_translate_attr.Set(new_translate)
+
+                        # Keep the debug print for visibility when running in headless mode.
+                        updated_translate = target_translate_attr.Get()
+                        print(f"{source_translate}, & {target_translate}, & {updated_translate}")
                 self.assembly_gripper_released = True
 
                 if self.assembly_stage_start is None:
