@@ -530,7 +530,9 @@ class DualRobotController:
 
                             if target_rigid_attr and target_rigid_attr.IsValid():
                                 target_rigid_attr.Set(True)
-
+                            if not self.mold_sg2_gripper_closed:
+                                self.send_mold_sg2_gripper_command(True)
+                                self.mold_sg2_gripper_closed = True
                             print(
                                 f"Updated moldcap translate to {new_translate} based on source {source_translate}"
                             )
