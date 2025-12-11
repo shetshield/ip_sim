@@ -510,14 +510,18 @@ class DualRobotController:
 
                     if source_translate is not None and target_translate_attr and target_translate_attr.IsValid():
                         target_translate = target_translate_attr.Get()
-                        target_y = target_translate[1] if target_translate is not None else 0.0
+                        if target_translate is None:
+                            target_translate = Gf.Vec3d(0.0, 0.0, 0.0)
+
+                        target_y = target_translate[1]
                         new_translate = Gf.Vec3d(source_translate[0], target_y, source_translate[2])
                         omni.kit.commands.execute(
                             "ChangeProperty",
                             prop_path=str(target_translate_attr.GetPath()),
                             value=new_translate,
+                            prev=target_translate,
                         )
-                        # print(f"{source_translate}, & {target_translate}, & {target_translate_attr.Get()}")
+                        print(f"{source_translate}, & {target_translate}, & {target_translate_attr.Get()}")
                 self.assembly_gripper_released = True
 
                 if self.assembly_stage_start is None:
