@@ -79,7 +79,7 @@ class DualRobotController:
         self.lid_assy_speed = 0.1
         self.lid_assy_kp = 5.0
         self.lid_assy_first_stop = 0.56
-        self.lid_assy_second_stop = 0.7
+        self.lid_assy_second_stop = 0.69
         self.assembly_move_timeout = 2.0
         self.assembly_rotation_joint = "Assy_Assem_r_joint"
         self.assembly_rotation_speed = 15.0
@@ -441,10 +441,10 @@ class DualRobotController:
         # 4. Move to 0.7 while rotating assembly joint at speed 15
         if self.assembly_sequence_stage == 4:
             lid_pos, reached_target = self._command_lid_assy_to_target(
-                self.lid_assy_second_stop, self.lid_assy_speed
+                self.lid_assy_second_stop, 0.25*self.lid_assy_speed
             )
             self.assembly_rotation_subset.apply_action(
-                joint_velocities=np.array([0.5*self.assembly_rotation_speed])
+                joint_velocities=np.array([self.assembly_rotation_speed])
             )
 
             if self.assembly_stage_start is None:
@@ -455,7 +455,7 @@ class DualRobotController:
             # collisions or limits).
             elapsed = time.time() - self.assembly_stage_start
 
-            if reached_target or elapsed >= 2*self.assembly_move_timeout:
+            if reached_target or elapsed >= self.assembly_move_timeout:
                 self.lid_assy_hold_pos = self.lid_assy_subset.get_joint_positions()[0]
                 self.assembly_rotation_hold_pos = assembly_rot_pos
                 self.lid_assy_subset.apply_action(joint_velocities=np.array([0.0]))
@@ -470,13 +470,14 @@ class DualRobotController:
             self._hold_assembly_rotation(assembly_rot_pos)
 
             if not self.assembly_gripper_released:
-                self.send_assembly_gripper_command(False)
-                self.assembly_gripper_released = True
                 assembly_gripper_cylinder_prim = self.stage.GetPrimAtPath(self.assembly_gripper_cylinder_path)
                 if assembly_gripper_cylinder_prim.IsValid():
                     collision_attr = assembly_gripper_cylinder_prim.GetAttribute("physics:collisionEnabled")
                     if collision_attr and collision_attr.IsValid():
-                        collision_attr.Set(False)
+                        collision_attr.Set(False)                
+                self.send_assembly_gripper_command(False)
+                self.assembly_gripper_released = True
+
                 if self.assembly_stage_start is None:
                     self.assembly_stage_start = time.time()
 
