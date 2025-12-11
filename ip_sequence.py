@@ -4,7 +4,7 @@ import numpy as np
 import omni.kit.commands
 import omni.usd
 import time
-from pxr import Gf
+from pxr import Gf, UsdGeom
 
 # [Interface Import]
 try:
@@ -507,14 +507,12 @@ class DualRobotController:
 
                 if source_translate_attr and source_translate_attr.IsValid() and target_prim.IsValid():
                     source_translate = source_translate_attr.Get()
-                    print("here1")
 
                     if source_translate is not None:
-                        print("here2")
                         xform_api = UsdGeom.XformCommonAPI(target_prim)
-                        print(f"{xform_api} & here3")
-                        if xform_api:
-                            print("here4")
+                        print(f"{xform_api} & here1")
+                        if xform_api and xform_api.GetUsdPrim().IsValid():
+                            print("here2")
                             target_translate = xform_api.GetTranslateAttr().Get()
                             if target_translate is None:
                                 target_translate = Gf.Vec3d(0.0, 0.0, 0.0)
