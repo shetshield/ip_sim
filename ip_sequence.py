@@ -70,6 +70,7 @@ class DualRobotController:
         self.lid_assy_speed = 0.1
         self.lid_assy_first_stop = 0.56
         self.lid_assy_second_stop = 0.7
+        self.assembly_move_timeout = 3.0
         self.assembly_rotation_joint = "Assy_Assem_r_joint"
         self.assembly_rotation_speed = 15.0
 
@@ -366,8 +367,13 @@ class DualRobotController:
 
         # 1. Move to 0.56 with velocity 0.1
         if self.assembly_sequence_stage == 1:
+            if self.assembly_stage_start is None:
+                self.assembly_stage_start = time.time()
+
             self.lid_assy_subset.apply_action(joint_velocities=np.array([self.lid_assy_speed]))
-            if lid_pos >= self.lid_assy_first_stop - self.position_tolerance:
+
+            elapsed = time.time() - self.assembly_stage_start
+            if lid_pos >= self.lid_assy_first_stop - self.position_tolerance or elapsed >= self.assembly_move_timeout:
                 self.lid_assy_hold_pos = lid_pos
                 self.lid_assy_subset.apply_action(joint_velocities=np.array([0.0]))
                 self.assembly_stage_start = time.time()
@@ -390,7 +396,7 @@ class DualRobotController:
         # 3. Close /World/assem_sg and hold
         if self.assembly_sequence_stage == 3:
             self._hold_lid_assy_position(lid_pos)
-            if not self.assembly_gripper_closed:
+            if not self.assembly_grippesr_closed:
                 self.send_assembly_gripper_command(True)
                 self.assembly_gripper_closed = True
                 self.assembly_stage_start = time.time()
@@ -405,6 +411,7 @@ class DualRobotController:
             self.assembly_rotation_subset.apply_action(
                 joint_velocities=np.array([self.assembly_rotation_speed])
             )
+            print(f"lid_pos: {lid_pos:.4f}, {self.lid_assy_second_stop}")
 
             if lid_pos >= self.lid_assy_second_stop - self.position_tolerance:
                 self.lid_assy_hold_pos = lid_pos
