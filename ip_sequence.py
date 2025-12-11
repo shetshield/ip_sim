@@ -405,7 +405,7 @@ class DualRobotController:
         # 3. Close /World/assem_sg and hold
         if self.assembly_sequence_stage == 3:
             self._hold_lid_assy_position(lid_pos)
-            if not self.assembly_grippesr_closed:
+            if not self.assembly_gripper_closed:
                 self.send_assembly_gripper_command(True)
                 self.assembly_gripper_closed = True
                 self.assembly_stage_start = time.time()
