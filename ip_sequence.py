@@ -33,6 +33,11 @@ class DualRobotController:
         self.mold_sg_prim_path = "/World/mold_sg"
 
         self.unlock_target_path = self.world_root + "/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/tn__moldACAP_23_mG6"
+
+        self.cone_prim_path = (
+            "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__HA980DW1_l8d3o4Z0/"
+            "tn__HA980DWHOPPER1_xEt58c8u0/Cone/pd"
+        )
         
         # Settings
         self.joint_1 = "Lid_Lifter_p_joint"
@@ -91,6 +96,12 @@ class DualRobotController:
         self.rotation_started = False
         self.mold_gripper_closed = False
         self.mold_gripper_released = False
+
+        cone_prim = self.stage.GetPrimAtPath(self.cone_prim_path)
+        if cone_prim.IsValid():
+            rigid_body_attr = cone_prim.GetAttribute("physics:rigidBodyEnabled")
+            if rigid_body_attr and rigid_body_attr.IsValid():
+                rigid_body_attr.Set(True)
 
         # 초기화 시 열기
         self.send_gripper_command(False)
@@ -180,9 +191,7 @@ class DualRobotController:
         # 2. self.threshold_2 도달 후 hold_duration 대기, 그 후 Surface Gripper Open
         if self.post_table_sequence_stage == 2:
             if self._post_table_stage_elapsed():
-                prim = self.stage.GetPrimAtPath(
-                    "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__HA980DW1_l8d3o4Z0/tn__HA980DWHOPPER1_xEt58c8u0/Cone/pd"
-                )
+                prim = self.stage.GetPrimAtPath(self.cone_prim_path)
                 if prim.IsValid():
                     translate_attr = prim.GetAttribute("xformOp:translate")
                     if translate_attr and translate_attr.IsValid():
