@@ -39,6 +39,7 @@ class DualRobotController:
 
         # 별도로 동작하는 Surface Gripper Prim Path
         self.mold_sg_prim_path = "/World/mold_sg"
+        self.mold_sg2_prim_path = "/World/mold_sg2"
 
         self.unlock_target_path = self.world_root + "/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/tn__moldACAP_23_mG6"
 
@@ -126,6 +127,7 @@ class DualRobotController:
         self.rotation_started = False
         self.mold_gripper_closed = False
         self.mold_gripper_released = False
+        self.mold_sg2_gripper_closed = False
         self.assembly_sequence_stage = 0
         self.assembly_stage_start = None
         self.lid_assy_hold_pos = None
@@ -144,7 +146,10 @@ class DualRobotController:
         # 초기화 시 열기
         self.send_gripper_command(False)
         self.send_mold_gripper_command(False)
+        self.send_mold_sg2_gripper_command(False)
         self.send_assembly_gripper_command(False)
+
+        self.mold_sg2_gripper_closed = False
 
         assembly_gripper_cylinder_prim = self.stage.GetPrimAtPath(self.assembly_gripper_cylinder_path)
         if assembly_gripper_cylinder_prim.IsValid():
@@ -198,6 +203,21 @@ class DualRobotController:
                 print(">>> [Mold SG Command] OPEN Signal Sent.")
         except Exception as e:
             print(f"[ERROR] Mold Gripper Command Failed: {e}")
+
+    def send_mold_sg2_gripper_command(self, close: bool):
+        """/World/mold_sg2 Surface Gripper 제어"""
+        if not IS_INTERFACE_AVAILABLE or sg_interface is None:
+            return
+
+        try:
+            if close:
+                sg_interface.close_gripper(self.mold_sg2_prim_path)
+                print(">>> [Mold SG2 Command] CLOSE Signal Sent.")
+            else:
+                sg_interface.open_gripper(self.mold_sg2_prim_path)
+                print(">>> [Mold SG2 Command] OPEN Signal Sent.")
+        except Exception as e:
+            print(f"[ERROR] Mold SG2 Gripper Command Failed: {e}")
 
     def get_gripper_status(self):
         """현재 그리퍼의 실제 상태(Closed/Open)를 Attribute에서 읽어옴"""
@@ -455,7 +475,7 @@ class DualRobotController:
             # collisions or limits).
             elapsed = time.time() - self.assembly_stage_start
 
-            if reached_target or elapsed >= self.assembly_move_timeout:
+            if reached_target or elapsed >= 1.7 * self.assembly_move_timeout:
                 self.lid_assy_hold_pos = self.lid_assy_subset.get_joint_positions()[0]
                 self.assembly_rotation_hold_pos = assembly_rot_pos
                 self.lid_assy_subset.apply_action(joint_velocities=np.array([0.0]))
@@ -474,7 +494,24 @@ class DualRobotController:
                 if assembly_gripper_cylinder_prim.IsValid():
                     collision_attr = assembly_gripper_cylinder_prim.GetAttribute("physics:collisionEnabled")
                     if collision_attr and collision_attr.IsValid():
-                        collision_attr.Set(False)                
+                        collision_attr.Set(False)
+                source_translate_attr = self.stage.GetAttributeAtPath(
+                    "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/"
+                    "tn__NT251101A101_tCX59b7o0/tn__moldA181_k88X2Lu0a6i0/mold.xformOp:translate"
+                )
+                target_translate_attr = self.stage.GetAttributeAtPath(
+                    "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/"
+                    "tn__moldACAP_23_mG6.xformOp:translate"
+                )
+
+                if source_translate_attr and source_translate_attr.IsValid():
+                    source_translate = source_translate_attr.Get()
+
+                    if source_translate is not None and target_translate_attr and target_translate_attr.IsValid():
+                        target_translate = target_translate_attr.Get()
+                        target_y = target_translate[1] if target_translate is not None else 0.0
+                        target_translate_attr.Set(Gf.Vec3d(source_translate[0], target_y, source_translate[2]))
+                        print(f"{source_translate}, & {target_translate}")
                 self.send_assembly_gripper_command(False)
                 self.assembly_gripper_released = True
 
@@ -490,6 +527,10 @@ class DualRobotController:
         if self.assembly_sequence_stage == 6:
             self.assembly_rotation_subset.apply_action(joint_velocities=np.array([0.0]))
             self.lid_assy_subset.apply_action(joint_velocities=np.array([-self.lid_assy_speed]))
+
+            if not self.mold_sg2_gripper_closed:
+                self.send_mold_sg2_gripper_command(True)
+                self.mold_sg2_gripper_closed = True
 
             if lid_pos <= self.position_tolerance:
                 self.lid_assy_hold_pos = 0.0
