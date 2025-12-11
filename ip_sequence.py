@@ -42,7 +42,7 @@ class DualRobotController:
         self.mold_sg_prim_path = "/World/mold_sg"
         self.mold_sg2_prim_path = "/World/mold_sg2"
 
-        self.unlock_target_path = self.world_root + "/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/tn__moldACAP_23_mG6"
+        self.unlock_target_path = self.world_root + "/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/moldcap"
 
         self.cylinder_prim_path = (
             "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/"
@@ -502,7 +502,7 @@ class DualRobotController:
                 )
                 target_prim = self.stage.GetPrimAtPath(
                     "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/"
-                    "tn__moldACAP_23_mG6"
+                    "moldcap"
                 )
 
                 if source_translate_attr and source_translate_attr.IsValid() and target_prim.IsValid():
@@ -524,7 +524,10 @@ class DualRobotController:
 
                         if transform_ops:
                             matrix = transform_ops[0].GetOpTransform(Usd.TimeCode.Default())
-                            matrix.SetRow(3, Gf.Vec4d(*new_translate, matrix[3][3]))
+
+                            # Translation for matrix-based ops lives in the last column rather than the last row.
+                            # Update that column so the transform op actually moves the prim.
+                            matrix.SetColumn(3, Gf.Vec4d(*new_translate, matrix[3][3]))
                             transform_ops[0].Set(matrix, Usd.TimeCode.Default())
                         else:
                             # Use XformCommonAPI to ensure translate is applied correctly when only TRS ops are present.
