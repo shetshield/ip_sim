@@ -513,7 +513,7 @@ class DualRobotController:
                         print(f"{xform_api} & here3")
                         # if xform_api:
                         print("here4")
-                        translate, _, _, _ = xform_api.GetXformVectors(Usd.TimeCode.Default())
+                        translate = xform_api.GetXformVectors(Usd.TimeCode.Default())
                         target_y = translate[1] if translate is not None else 0.0
 
                         new_translate = (source_translate[0], target_y, source_translate[2])
@@ -521,7 +521,7 @@ class DualRobotController:
                         xform_api.SetTranslate(new_translate)
 
                         # Keep the debug print for visibility when running in headless mode.
-                        updated_translate, _, _, _ = xform_api.GetXformVectors(Usd.TimeCode.Default())
+                        updated_translate = xform_api.GetXformVectors(Usd.TimeCode.Default())
                         print(f"{source_translate}, & {translate}, & {updated_translate}")
                 self.assembly_gripper_released = True
 
