@@ -24,6 +24,10 @@ class DualRobotController:
         self.root_2 = self.world_root + "/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/tn__MY1C25400L6LZ7311_XIHq4d0W2DfBh1"
         self.table_root = self.world_root + "/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/tn__MY1C25400L6LZ7311_XIHq4d0W2DfBh1/tn___MY1C250_TABLE_nIP/tn___MY1C250_TABLE_nIP"
         self.rotation_root = self.world_root + "/tn__NT251101A001_tCX59b7o0/tn__NT251101A101_tCX59b7o0/Rotation_Part"
+        self.assembly_root = (
+            self.world_root + "/tn__NT251101A001_tCX59b7o0/tn__NT251101A3011_uDDl3V0l19d9V1/Lid_Assem_Table"
+        )
+        self.assembly_rotation_root = self.world_root + "/tn__NT251101A001_tCX59b7o0/tn__NT251101A3011_uDDl3V0l19d9V1/rot"
 
         # [Surface Gripper Prim Path]
         self.sg_prim_path = \
@@ -57,15 +61,25 @@ class DualRobotController:
         self.rotation_tolerance = np.deg2rad(0.05)
         self.rotation_kp = 6.0
         self.rotation_max_speed = 1.0
+        self.lid_assy_joint = "Lid_Assy_p_joint"
+        self.lid_assy_speed = 0.1
+        self.lid_assy_first_stop = 0.56
+        self.lid_assy_second_stop = 0.7
+        self.assembly_rotation_joint = "Assy_Assem_r_joint"
+        self.assembly_rotation_speed = 15.0
 
         self.robot_1 = Articulation(self.root_1)
         self.robot_2 = Articulation(self.root_2)
         self.table = Articulation(self.table_root)
         self.rotation = Articulation(self.rotation_root)
+        self.lid_assy = Articulation(self.assembly_root)
+        self.assembly_rotation = Articulation(self.assembly_rotation_root)
         self.subset_1 = ArticulationSubset(self.robot_1, [self.joint_1])
         self.subset_2 = ArticulationSubset(self.robot_2, [self.joint_2])
         self.table_subset = ArticulationSubset(self.table, [self.table_joint])
         self.rotation_subset = ArticulationSubset(self.rotation, [self.rotation_joint])
+        self.lid_assy_subset = ArticulationSubset(self.lid_assy, [self.lid_assy_joint])
+        self.assembly_rotation_subset = ArticulationSubset(self.assembly_rotation, [self.assembly_rotation_joint])
         self.stage = omni.usd.get_context().get_stage()
 
         self.reset_logic()
@@ -96,6 +110,12 @@ class DualRobotController:
         self.rotation_started = False
         self.mold_gripper_closed = False
         self.mold_gripper_released = False
+        self.assembly_sequence_stage = 0
+        self.assembly_stage_start = None
+        self.lid_assy_hold_pos = None
+        self.assembly_rotation_hold_pos = None
+        self.assembly_gripper_closed = False
+        self.assembly_gripper_released = False
 
         cone_prim = self.stage.GetPrimAtPath(self.cone_prim_path)
         if cone_prim.IsValid():
@@ -106,6 +126,7 @@ class DualRobotController:
         # 초기화 시 열기
         self.send_gripper_command(False)
         self.send_mold_gripper_command(False)
+        self.send_assembly_gripper_command(False)
 
         prim = self.stage.GetPrimAtPath(self.unlock_target_path)
         if prim.IsValid():
@@ -161,6 +182,21 @@ class DualRobotController:
             return "Unknown"
         attr = prim.GetAttribute("isaac:status")
         return attr.Get() if attr.IsValid() else "Unknown"
+
+    def send_assembly_gripper_command(self, close: bool):
+        """/World/assem_sg 전용 Surface Gripper 제어"""
+        if not IS_INTERFACE_AVAILABLE or sg_interface is None:
+            return
+
+        try:
+            if close:
+                sg_interface.close_gripper("/World/assem_sg")
+                print(">>> [Assembly SG Command] CLOSE Signal Sent.")
+            else:
+                sg_interface.open_gripper("/World/assem_sg")
+                print(">>> [Assembly SG Command] OPEN Signal Sent.")
+        except Exception as e:
+            print(f"[ERROR] Assembly Gripper Command Failed: {e}")
 
     def _post_table_stage_elapsed(self):
         if self.post_table_stage_start is None:
@@ -267,6 +303,11 @@ class DualRobotController:
                     self.rotation_subset.apply_action(
                         joint_velocities=np.array([(self.rotation_hold_pos - current_rotation) * 10.0])
                     )
+
+                if self.assembly_sequence_stage == 0:
+                    self.assembly_sequence_stage = 1
+
+                self.run_assembly_sequence()
                 return
 
             rotation_error = self.rotation_target - current_rotation
@@ -290,6 +331,113 @@ class DualRobotController:
                 )
                 self.rotation_subset.apply_action(joint_velocities=np.array([commanded_speed]))
 
+    def _assembly_stage_elapsed(self):
+        if self.assembly_stage_start is None:
+            self.assembly_stage_start = time.time()
+            return False
+        return (time.time() - self.assembly_stage_start) >= self.hold_duration
+
+    def _hold_lid_assy_position(self, current_pos):
+        if self.lid_assy_hold_pos is not None:
+            self.lid_assy_subset.apply_action(
+                joint_velocities=np.array([(self.lid_assy_hold_pos - current_pos) * 10.0])
+            )
+
+    def _hold_assembly_rotation(self, current_rot):
+        if self.assembly_rotation_hold_pos is not None:
+            self.assembly_rotation_subset.apply_action(
+                joint_velocities=np.array([(self.assembly_rotation_hold_pos - current_rot) * 10.0])
+            )
+
+    def run_assembly_sequence(self):
+        lid_pos = self.lid_assy_subset.get_joint_positions()[0]
+        assembly_rot_pos = self.assembly_rotation_subset.get_joint_positions()[0]
+
+        # Idle hold
+        if self.assembly_sequence_stage == 0:
+            self._hold_lid_assy_position(lid_pos)
+            self._hold_assembly_rotation(assembly_rot_pos)
+            return
+
+        # 1. Move to 0.56 with velocity 0.1
+        if self.assembly_sequence_stage == 1:
+            self.lid_assy_subset.apply_action(joint_velocities=np.array([self.lid_assy_speed]))
+            if lid_pos >= self.lid_assy_first_stop - self.position_tolerance:
+                self.lid_assy_hold_pos = lid_pos
+                self.lid_assy_subset.apply_action(joint_velocities=np.array([0.0]))
+                self.assembly_stage_start = time.time()
+                self.assembly_sequence_stage = 2
+            return
+
+        # 2. Hold at 0.56 for hold_duration
+        if self.assembly_sequence_stage == 2:
+            self._hold_lid_assy_position(lid_pos)
+            if self._assembly_stage_elapsed():
+                self.assembly_sequence_stage = 3
+                self.assembly_stage_start = None
+            return
+
+        # 3. Close /World/assem_sg and hold
+        if self.assembly_sequence_stage == 3:
+            self._hold_lid_assy_position(lid_pos)
+            if not self.assembly_gripper_closed:
+                self.send_assembly_gripper_command(True)
+                self.assembly_gripper_closed = True
+                self.assembly_stage_start = time.time()
+            elif (self.assembly_stage_start is not None) and self._assembly_stage_elapsed():
+                self.assembly_sequence_stage = 4
+                self.assembly_stage_start = None
+            return
+
+        # 4. Move to 0.7 while rotating assembly joint at speed 15
+        if self.assembly_sequence_stage == 4:
+            self.lid_assy_subset.apply_action(joint_velocities=np.array([self.lid_assy_speed]))
+            self.assembly_rotation_subset.apply_action(
+                joint_velocities=np.array([self.assembly_rotation_speed])
+            )
+
+            if lid_pos >= self.lid_assy_second_stop - self.position_tolerance:
+                self.lid_assy_hold_pos = lid_pos
+                self.assembly_rotation_hold_pos = assembly_rot_pos
+                self.lid_assy_subset.apply_action(joint_velocities=np.array([0.0]))
+                self.assembly_rotation_subset.apply_action(joint_velocities=np.array([0.0]))
+                self.assembly_sequence_stage = 5
+                self.assembly_stage_start = time.time()
+            return
+
+        # 5. Stop rotation, open gripper, hold for hold_duration
+        if self.assembly_sequence_stage == 5:
+            self._hold_lid_assy_position(lid_pos)
+            self._hold_assembly_rotation(assembly_rot_pos)
+
+            if not self.assembly_gripper_released:
+                self.send_assembly_gripper_command(False)
+                self.assembly_gripper_released = True
+                if self.assembly_stage_start is None:
+                    self.assembly_stage_start = time.time()
+
+            if self._assembly_stage_elapsed():
+                self.assembly_sequence_stage = 6
+                self.assembly_stage_start = None
+            return
+
+        # 6. Return to 0 with velocity -0.1
+        if self.assembly_sequence_stage == 6:
+            self.assembly_rotation_subset.apply_action(joint_velocities=np.array([0.0]))
+            self.lid_assy_subset.apply_action(joint_velocities=np.array([-self.lid_assy_speed]))
+
+            if lid_pos <= self.position_tolerance:
+                self.lid_assy_hold_pos = 0.0
+                self.lid_assy_subset.apply_action(joint_velocities=np.array([0.0]))
+                self.assembly_sequence_stage = 7
+                self.assembly_stage_start = time.time()
+            return
+
+        # 7. Hold final position
+        if self.assembly_sequence_stage >= 7:
+            self._hold_lid_assy_position(lid_pos)
+            self._hold_assembly_rotation(assembly_rot_pos)
+
     def step(self):
         needs_init = False
         if not self.robot_1.handles_initialized:
@@ -303,6 +451,12 @@ class DualRobotController:
             needs_init = True
         if not self.rotation.handles_initialized:
             self.rotation.initialize()
+            needs_init = True
+        if not self.lid_assy.handles_initialized:
+            self.lid_assy.initialize()
+            needs_init = True
+        if not self.assembly_rotation.handles_initialized:
+            self.assembly_rotation.initialize()
             needs_init = True
         
         if needs_init:
