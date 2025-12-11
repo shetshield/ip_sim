@@ -509,6 +509,7 @@ class DualRobotController:
                 if source_prim.IsValid() and target_prim.IsValid():
                     source_translate_attr = source_prim.GetAttribute("xformOp:translate")
                     target_translate_attr = target_prim.GetAttribute("xformOp:translate")
+                    target_rigid_attr = target_prim.GetAttribute("physics:rigidBodyEnabled")
 
                     if (
                         source_translate_attr
@@ -522,7 +523,13 @@ class DualRobotController:
                         if source_translate is not None:
                             target_y = target_translate[1] if target_translate is not None else 0.0
                             new_translate = Gf.Vec3d(source_translate[0], target_y, source_translate[2])
+                            if target_rigid_attr and target_rigid_attr.IsValid():
+                                target_rigid_attr.Set(False)
+
                             target_translate_attr.Set(new_translate)
+
+                            if target_rigid_attr and target_rigid_attr.IsValid():
+                                target_rigid_attr.Set(True)
 
                             print(
                                 f"Updated moldcap translate to {new_translate} based on source {source_translate}"
