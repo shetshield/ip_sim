@@ -510,21 +510,19 @@ class DualRobotController:
 
                     if source_translate is not None:
                         xform_api = UsdGeom.XformCommonAPI(target_prim)
-                        print(f"{xform_api} & here1")
-                        if xform_api and xform_api.GetUsdPrim().IsValid():
-                            print("here2")
-                            target_translate = xform_api.GetTranslateAttr().Get()
-                            if target_translate is None:
-                                target_translate = Gf.Vec3d(0.0, 0.0, 0.0)
+                        print(f"{xform_api} & here3")
+                        # if xform_api:
+                        print("here4")
+                        translate, _, _, _ = xform_api.GetXformVectors()
+                        target_y = translate[1] if translate is not None else 0.0
 
-                            target_y = target_translate[1]
-                            new_translate = (source_translate[0], target_y, source_translate[2])
-                            # Use XformCommonAPI to ensure translate is applied correctly even when a matrix op is present.
-                            xform_api.SetTranslate(new_translate)
+                        new_translate = (source_translate[0], target_y, source_translate[2])
+                        # Use XformCommonAPI to ensure translate is applied correctly even when a matrix op is present.
+                        xform_api.SetTranslate(new_translate)
 
-                            # Keep the debug print for visibility when running in headless mode.
-                            updated_translate = xform_api.GetTranslateAttr().Get()
-                            print(f"{source_translate}, & {target_translate}, & {updated_translate}")
+                        # Keep the debug print for visibility when running in headless mode.
+                        updated_translate, _, _, _ = xform_api.GetXformVectors()
+                        print(f"{source_translate}, & {translate}, & {updated_translate}")
                 self.assembly_gripper_released = True
 
                 if self.assembly_stage_start is None:
