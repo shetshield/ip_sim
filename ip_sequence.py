@@ -38,6 +38,11 @@ class DualRobotController:
 
         self.unlock_target_path = self.world_root + "/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/tn__moldACAP_23_mG6"
 
+        self.cylinder_prim_path = (
+            "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/"
+            "tn__NT251101A101_tCX59b7o0/tn__moldA181_k88X2Lu0a6i0/mold/mold/Cylinder_01"
+        )
+
         self.cone_prim_path = (
             "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__HA980DW1_l8d3o4Z0/"
             "tn__HA980DWHOPPER1_xEt58c8u0/Cone/pd"
@@ -373,6 +378,11 @@ class DualRobotController:
         if self.assembly_sequence_stage == 2:
             self._hold_lid_assy_position(lid_pos)
             if self._assembly_stage_elapsed():
+                cylinder_prim = self.stage.GetPrimAtPath(self.cylinder_prim_path)
+                if cylinder_prim.IsValid():
+                    collision_attr = cylinder_prim.GetAttribute("physics:collisionEnabled")
+                    if collision_attr and collision_attr.IsValid():
+                        collision_attr.Set(False)
                 self.assembly_sequence_stage = 3
                 self.assembly_stage_start = None
             return
