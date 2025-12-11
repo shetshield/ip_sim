@@ -496,41 +496,37 @@ class DualRobotController:
                     collision_attr = assembly_gripper_cylinder_prim.GetAttribute("physics:collisionEnabled")
                     if collision_attr and collision_attr.IsValid():
                         collision_attr.Set(False)
-                source_translate_attr = self.stage.GetAttributeAtPath(
+
+                source_prim = self.stage.GetPrimAtPath(
                     "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/"
-                    "tn__NT251101A101_tCX59b7o0/tn__moldA181_k88X2Lu0a6i0/mold.xformOp:translate"
+                    "tn__NT251101A101_tCX59b7o0/tn__moldA181_k88X2Lu0a6i0/mold"
                 )
                 target_prim = self.stage.GetPrimAtPath(
                     "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/"
                     "moldcap"
                 )
 
-                if source_translate_attr and source_translate_attr.IsValid() and target_prim.IsValid():
-                    source_translate = source_translate_attr.Get()
+                if source_prim.IsValid() and target_prim.IsValid():
+                    source_translate_attr = source_prim.GetAttribute("xformOp:translate")
+                    target_translate_attr = target_prim.GetAttribute("xformOp:translate")
 
-                    if source_translate is not None:
-                        xform_api = UsdGeom.XformCommonAPI(target_prim)
-                        xform_vectors = xform_api.GetXformVectors(Usd.TimeCode.Default())
-                        target_translate = xform_vectors[0] if xform_vectors is not None else None
-                        target_y = target_translate[1] if target_translate is not None else 0.0
+                    if (
+                        source_translate_attr
+                        and source_translate_attr.IsValid()
+                        and target_translate_attr
+                        and target_translate_attr.IsValid()
+                    ):
+                        source_translate = source_translate_attr.Get()
+                        target_translate = target_translate_attr.Get()
 
-                        new_translate = (source_translate[0], target_y, source_translate[2])
+                        if source_translate is not None:
+                            target_y = target_translate[1] if target_translate is not None else 0.0
+                            new_translate = Gf.Vec3d(source_translate[0], target_y, source_translate[2])
+                            target_translate_attr.Set(new_translate)
 
-                        xformable = UsdGeom.Xformable(target_prim)
-                        ordered_ops = xformable.GetOrderedXformOps()
-
-                        # Prefer updating an explicit translate op when a matrix xformOp:transform is not present.
-                        translate_ops = [op for op in ordered_ops if op.GetOpType() == UsdGeom.XformOp.TypeTranslate]
-
-                        if translate_ops:
-                            translate_ops[0].Set(Gf.Vec3d(*new_translate), Usd.TimeCode.Default())
-                        else:
-                            # Fallback to XformCommonAPI to ensure translate is applied when only TRS ops are present.
-                            xform_api.SetTranslate(Gf.Vec3d(*new_translate))
-
-                        # Keep the debug print for visibility when running in headless mode.
-                        updated_translate = xform_api.GetXformVectors(Usd.TimeCode.Default())
-                        print(f"{source_translate}, & {xform_vectors}, & {updated_translate}")
+                            print(
+                                f"Updated moldcap translate to {new_translate} based on source {source_translate}"
+                            )
                 self.assembly_gripper_released = True
 
                 if self.assembly_stage_start is None:
