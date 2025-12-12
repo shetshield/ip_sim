@@ -194,7 +194,18 @@ class DualRobotController:
 
     def _get_current_m1013_pose(self):
         joint_positions = self.m1013_robot.get_joint_positions()
-        pose = self.m1013_ik_solver.compute_forward_kinematics(joint_positions.tolist())
+        # Isaac Sim 5.1 introduced a keyword-only signature for the Lula solver's
+        # compute_forward_kinematics method. Use keyword arguments for the
+        # joint positions and fall back to positional arguments for older
+        # versions to avoid "missing positional argument" TypeErrors.
+        try:
+            pose = self.m1013_ik_solver.compute_forward_kinematics(
+                joint_positions=joint_positions.tolist(),
+                frame_name=self.m1013_end_effector_frame,
+            )
+        except TypeError:
+            pose = self.m1013_ik_solver.compute_forward_kinematics(joint_positions.tolist())
+
         return self._extract_pose(pose)
 
     def _prepare_eef_waypoints(self):
