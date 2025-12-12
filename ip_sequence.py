@@ -223,7 +223,12 @@ class DualRobotController:
             return False
 
         if self.eef_default_orientation is None:
-            self.eef_default_orientation = current_orientation
+            # Some Isaac Sim builds may return a pose without a quaternion, so
+            # keep a safe default instead of passing None into the IK solver.
+            if current_orientation is None:
+                self.eef_default_orientation = np.array([0.0, 0.0, 0.0, 1.0])
+            else:
+                self.eef_default_orientation = current_orientation
 
         direction = self.final_eef_target - current_pos
         for step in range(1, self.eef_path_steps + 1):
