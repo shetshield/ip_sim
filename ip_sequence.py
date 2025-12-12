@@ -202,7 +202,16 @@ class DualRobotController:
             raise ValueError("Unsupported pose format from IK solver")
         return position, orientation
 
-    def _get_current_m1013_pose(self):
+        base_t, base_q = self._try_get_base_pose()
+        if base_t is not None and base_q is not None and hasattr(self.m1013_ik_solver, "set_robot_base_pose"):
+            try:
+                self.m1013_ik_solver.set_robot_base_pose(
+                    np.asarray(base_t, dtype=float),
+                    np.asarray(base_q, dtype=float),
+                )
+            except Exception as exc:
+                print(f"[M1013 IK] Failed to set robot base pose before FK: {exc}")
+
         joint_positions = self.m1013_robot.get_joint_positions()
         if joint_positions is None or len(joint_positions) == 0:
             # Physics Simulation View not ready yet, so skip the motion gracefully
