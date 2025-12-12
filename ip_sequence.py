@@ -220,11 +220,27 @@ class DualRobotController:
 
     def _solve_and_apply_m1013(self, target_position):
         joint_guess = self.m1013_robot.get_joint_positions()
-        ik_result = self.m1013_ik_solver.compute_inverse_kinematics(
-            target_position=target_position.tolist(),
-            target_orientation=self.eef_default_orientation.tolist(),
-            initial_joint_positions=joint_guess.tolist(),
-        )
+        try:
+            # Isaac Sim 5.1 accepts keyword-only arguments for the Lula solver.
+            ik_result = self.m1013_ik_solver.compute_inverse_kinematics(
+                target_position=target_position.tolist(),
+                target_orientation=self.eef_default_orientation.tolist(),
+                initial_joint_positions=joint_guess.tolist(),
+            )
+        except TypeError:
+            try:
+                # Older versions expect positional arguments.
+                ik_result = self.m1013_ik_solver.compute_inverse_kinematics(
+                    target_position.tolist(),
+                    self.eef_default_orientation.tolist(),
+                    joint_guess.tolist(),
+                )
+            except TypeError:
+                # Fall back again for builds where the solver omits the initial guess parameter.
+                ik_result = self.m1013_ik_solver.compute_inverse_kinematics(
+                    target_position.tolist(),
+                    self.eef_default_orientation.tolist(),
+                )
 
         if hasattr(ik_result, "joint_positions"):
             solved_positions = np.array(ik_result.joint_positions)
