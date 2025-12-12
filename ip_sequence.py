@@ -78,7 +78,7 @@ class DualRobotController:
         self.m1013_robot = Articulation(self.m1013_root_prim)
         self.m1013_art_kin_solver = None
 
-        self.final_eef_target = np.array([0, 1.02, 0.6])
+        self.final_eef_target = np.array([0, 1.03, 0.6])
         self.eef_path_steps = 20
         self.eef_waypoints = []
         self.eef_motion_started = False
@@ -265,7 +265,7 @@ class DualRobotController:
 
         return None, None
 
-    def _solve_and_apply_m1013(self, target_position):␊
+    def _solve_and_apply_m1013(self, target_position):
         """Compute and apply position-only IK to avoid misusing rotation matrices."""
 
         joint_guess = self.m1013_robot.get_joint_positions()
