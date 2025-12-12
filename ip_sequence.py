@@ -74,6 +74,7 @@ class DualRobotController:
         self.table_stop_threshold = 0.3799
         self.rotation_joint = "idx1_r_joint"
         self.rotation_target = np.deg2rad(-45.0)
+        self.rotation_final_target = self.rotation_target + np.deg2rad(-90.0)
         self.rotation_tolerance = np.deg2rad(0.01)
         self.rotation_kp = 6.0
         self.rotation_max_speed = 1.0
@@ -126,6 +127,9 @@ class DualRobotController:
         self.rotation_hold_pos = None
         self.rotation_done = False
         self.rotation_started = False
+        self.rotation_final_hold_start = None
+        self.rotation_final_hold_pos = None
+        self.rotation_final_done = False
         self.mold_gripper_closed = False
         self.mold_gripper_released = False
         self.mold_sg2_gripper_closed = False
@@ -358,7 +362,7 @@ class DualRobotController:
                     self.send_mold_gripper_command(False)
                     self.mold_gripper_released = True
 
-                if self.rotation_hold_pos is not None:
+                if self.rotation_hold_pos is not None and self.assembly_sequence_stage < 7:
                     self.rotation_subset.apply_action(
                         joint_velocities=np.array([(self.rotation_hold_pos - current_rotation) * 10.0])
                     )
@@ -367,6 +371,37 @@ class DualRobotController:
                     self.assembly_sequence_stage = 1
 
                 self.run_assembly_sequence()
+
+                if self.assembly_sequence_stage >= 7:
+                    if self.rotation_final_done:
+                        if self.rotation_final_hold_pos is not None:
+                            self.rotation_subset.apply_action(
+                                joint_velocities=np.array([
+                                    (self.rotation_final_hold_pos - current_rotation) * 10.0
+                                ])
+                            )
+                    else:
+                        final_error = self.rotation_final_target - current_rotation
+
+                        if abs(final_error) <= self.rotation_tolerance:
+                            self.rotation_subset.apply_action(joint_velocities=np.array([0.0]))
+
+                            if self.rotation_final_hold_start is None:
+                                self.rotation_final_hold_start = time.time()
+                                self.rotation_final_hold_pos = current_rotation
+
+                            if (time.time() - self.rotation_final_hold_start) >= self.hold_duration:
+                                self.rotation_final_done = True
+                        else:
+                            self.rotation_final_hold_start = None
+                            self.rotation_final_hold_pos = None
+                            commanded_speed = np.clip(
+                                final_error * self.rotation_kp,
+                                -self.rotation_max_speed,
+                                self.rotation_max_speed,
+                            )
+                            self.rotation_subset.apply_action(joint_velocities=np.array([commanded_speed]))
+
                 return
 
             rotation_error = self.rotation_target - current_rotation
