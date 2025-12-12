@@ -306,9 +306,10 @@ class DualRobotController:
                     self.m1013_robot.apply_action(action)
                 else:
                     print("[M1013 IK] IK did not converge; no action applied")
-                return
+                return success
             except Exception as exc:
                 print(f"[M1013 IK] ArticulationKinematicsSolver IK failed: {exc}")
+                return False
 
         def _call_inverse_kinematics():
             """Call Lula IK while adapting to differing function signatures."""
@@ -370,7 +371,11 @@ class DualRobotController:
         except Exception as exc:
             print(f"[M1013 IK] Failed to compute inverse kinematics: {exc}")
             self.eef_motion_finished = True
-            return
+            return False
+
+        if ik_result is None:
+            print("[M1013 IK] No IK result returned; waypoint retained")
+            return False
 
         if hasattr(ik_result, "joint_positions"):
             solved_positions = np.array(ik_result.joint_positions)
@@ -378,6 +383,7 @@ class DualRobotController:
             solved_positions = np.array(ik_result)
 
         self.m1013_robot.set_joint_positions(solved_positions)
+        return True
 
     def _drive_m1013_to_final_pose(self):
         if self.eef_motion_finished:
@@ -397,8 +403,8 @@ class DualRobotController:
             return
 
         target_position = self.eef_waypoints[0]
-        self._solve_and_apply_m1013(target_position)
-        self.eef_waypoints.pop(0)
+        if self._solve_and_apply_m1013(target_position):
+            self.eef_waypoints.pop(0)
 
     def reset_logic(self):
         self.phase_1_done = False; self.phase_2_done = False
