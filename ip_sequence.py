@@ -920,6 +920,9 @@ class DualRobotController:
         if not self.assembly_rotation.handles_initialized:
             self.assembly_rotation.initialize()
             needs_init = True
+        if not self.m1013_robot.handles_initialized:
+            self.m1013_robot.initialize()
+            needs_init = True
         
         if needs_init:
             self.reset_logic()
