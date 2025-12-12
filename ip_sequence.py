@@ -108,7 +108,7 @@ class DualRobotController:
         self.lid_assy_joint = "Lid_Assy_p_joint"
         self.lid_assy_speed = 0.1
         self.lid_assy_kp = 5.0
-        self.lid_assy_first_stop = 0.056
+        self.lid_assy_first_stop = 0.057
         self.lid_assy_second_stop = 0.07
         self.assembly_move_timeout = 2.0
         self.assembly_rotation_joint = "Assy_Assem_r_joint"
