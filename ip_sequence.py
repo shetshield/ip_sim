@@ -158,13 +158,43 @@ class DualRobotController:
             return False
 
         if self.m1013_ik_solver is None:
-            self.m1013_ik_solver = LulaKinematicsSolver(
-                robot_description_path=self.m1013_urdf_path,
-                kinematics_config_path=self.m1013_config_path,
-                end_effector_frame_name=self.m1013_end_effector_frame,
-            )
+            self.m1013_ik_solver = self._create_m1013_ik_solver()
+
+            if self.m1013_ik_solver is None:
+                # Avoid raising a TypeError when the signature differs across Isaac Sim versions.
+                self.eef_motion_finished = True
+                return False
 
         return True
+
+    def _create_m1013_ik_solver(self):
+        """Create a Lula IK solver while handling signature differences across Isaac Sim versions."""
+        solver_kwargs = {
+            "robot_description_path": self.m1013_urdf_path,
+            "end_effector_frame_name": self.m1013_end_effector_frame,
+        }
+
+        candidate_configs = [
+            {"kinematics_config_path": self.m1013_config_path},
+            {"kinematics_config": self.m1013_config_path},
+            {"kinematics_config_data": self.m1013_config_path},
+            {},
+        ]
+
+        for extra_kwargs in candidate_configs:
+            try:
+                return LulaKinematicsSolver(**solver_kwargs, **extra_kwargs)
+            except TypeError:
+                continue
+            except Exception as exc:  # pragma: no cover - defensive logging for runtime envs
+                print(f"[M1013 IK] LulaKinematicsSolver creation failed: {exc}")
+                return None
+
+        print(
+            "[M1013 IK] Unable to construct LulaKinematicsSolver. "
+            "Check the kinematics configuration parameters for this Isaac Sim version."
+        )
+        return None
 
     def _extract_pose(self, pose):
         if hasattr(pose, "p") and hasattr(pose, "q"):
