@@ -329,13 +329,15 @@ class DualRobotController:
 
     def _normalize_orientation(self, orientation):
         """Ensure target orientation is a quaternion the IK solver can consume."""
-        orientation_np = np.asarray(orientation, dtype=float)
+        orientation_np = np.asarray(orientation, dtype=float).reshape(-1)
 
         # Lula's IK expects a quaternion; some Isaac Sim versions return a
         # 3-length vector for Euler angles from forward kinematics. Pad with a
         # neutral w-component so the solver doesn't index past the array.
         if orientation_np.shape[-1] == 3:
             orientation_np = np.concatenate([orientation_np, np.array([1.0])])
+        elif orientation_np.shape[-1] > 4:
+            orientation_np = orientation_np[:4]
 
         return orientation_np
 
