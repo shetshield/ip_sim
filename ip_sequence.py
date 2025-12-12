@@ -5,7 +5,13 @@ import omni.kit.commands
 import omni.usd
 import time
 from pxr import Gf, Usd, UsdGeom
-from omni.isaac.motion_generation.lula.ik_solver import LulaKinematicsSolver
+
+try:
+    from omni.isaac.motion_generation.lula.ik_solver import LulaKinematicsSolver
+    LULA_IK_AVAILABLE = True
+except ImportError:
+    LulaKinematicsSolver = None
+    LULA_IK_AVAILABLE = False
 
 # [Interface Import]
 try:
