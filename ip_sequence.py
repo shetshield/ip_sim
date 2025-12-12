@@ -5,6 +5,7 @@ import omni.kit.commands
 import omni.usd
 import time
 from pxr import Gf, Usd, UsdGeom
+from omni.isaac.motion_generation.lula.ik_solver import LulaKinematicsSolver
 
 # [Interface Import]
 try:
@@ -60,6 +61,15 @@ class DualRobotController:
         self.m1013_urdf_path = "/Users/shets/Downloads/software/isaac_sim/model/m1013.urdf"
         self.m1013_default_revolute_deg = np.array([-90.0, 5.0, -145.0, 0.0, -40.0, 0.0])
         self.m1013_default_prismatic = np.zeros(4, dtype=float)
+        self.m1013_end_effector_frame = "eef"
+        self.m1013_robot = Articulation(self.m1013_root_prim)
+
+        self.final_eef_target = np.array([-736.948, -11.0, -669.432]) / 1000.0
+        self.eef_path_steps = 20
+        self.eef_default_orientation = None
+        self.eef_waypoints = []
+        self.eef_motion_started = False
+        self.eef_motion_finished = False
 
         self.cone_prim_path = (
             "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__HA980DW1_l8d3o4Z0/"
@@ -67,12 +77,9 @@ class DualRobotController:
         )
         
         # Settings
-        self.joint_1 = "Lid_Lifter_p_joint"
-        self.joint_2 = "UpDn_p_joint"
-        self.vel_1 = -0.1
-        self.threshold_1 = -0.022 - 0.02*2.6
-        self.vel_2 = -0.3
-        self.threshold_2 = -0.042
+        self.joint_1 = "Lid_Lifter_p_joint"; self.joint_2 = "UpDn_p_joint"
+        self.vel_1 = -0.1; self.vel_2 = -0.3
+        self.threshold_1 = -0.022 - 0.02*2.6; self.threshold_2 = -0.042
         self.hold_duration = 0.5
         self.up_vel_2 = 0.3
         self.position_tolerance = 1e-3
@@ -127,41 +134,100 @@ class DualRobotController:
         articulation.set_joint_positions(default_positions)
         print(f"M1013 default configuration applied to {self.m1013_root_prim}.")
 
+    def _ensure_m1013_ik_solver(self):
+        if self.m1013_ik_solver is None:
+            self.m1013_ik_solver = LulaKinematicsSolver(
+                robot_description_path=self.m1013_urdf_path,
+                kinematics_config_path=self.m1013_config_path,
+                end_effector_frame_name=self.m1013_end_effector_frame,
+            )
+
+    def _extract_pose(self, pose):
+        if hasattr(pose, "p") and hasattr(pose, "q"):
+            position = np.array(pose.p)
+            orientation = np.array(pose.q)
+        elif isinstance(pose, (list, tuple)) and len(pose) == 2:
+            position = np.array(pose[0])
+            orientation = np.array(pose[1])
+        else:
+            raise ValueError("Unsupported pose format from IK solver")
+        return position, orientation
+
+    def _get_current_m1013_pose(self):
+        joint_positions = self.m1013_robot.get_joint_positions()
+        pose = self.m1013_ik_solver.compute_forward_kinematics(joint_positions.tolist())
+        return self._extract_pose(pose)
+
+    def _prepare_eef_waypoints(self):
+        current_pos, current_orientation = self._get_current_m1013_pose()
+        if self.eef_default_orientation is None:
+            self.eef_default_orientation = current_orientation
+
+        direction = self.final_eef_target - current_pos
+        for step in range(1, self.eef_path_steps + 1):
+            alpha = step / self.eef_path_steps
+            self.eef_waypoints.append(current_pos + alpha * direction)
+
+    def _solve_and_apply_m1013(self, target_position):
+        joint_guess = self.m1013_robot.get_joint_positions()
+        ik_result = self.m1013_ik_solver.compute_inverse_kinematics(
+            target_position=target_position.tolist(),
+            target_orientation=self.eef_default_orientation.tolist(),
+            initial_joint_positions=joint_guess.tolist(),
+        )
+
+        if hasattr(ik_result, "joint_positions"):
+            solved_positions = np.array(ik_result.joint_positions)
+        else:
+            solved_positions = np.array(ik_result)
+
+        self.m1013_robot.set_joint_positions(solved_positions)
+
+    def _drive_m1013_to_final_pose(self):
+        if self.eef_motion_finished:
+            return
+
+        self._ensure_m1013_ik_solver()
+
+        if not self.eef_motion_started:
+            self._prepare_eef_waypoints()
+            self.eef_motion_started = True
+
+        if not self.eef_waypoints:
+            self.eef_motion_finished = True
+            return
+
+        target_position = self.eef_waypoints[0]
+        self._solve_and_apply_m1013(target_position)
+        self.eef_waypoints.pop(0)
+
     def reset_logic(self):
-        self.phase_1_done = False
-        self.phase_2_done = False
+        self.phase_1_done = False; self.phase_2_done = False
         self.suction_on = False
-        self.robot2_up_started = False
-        self.robot2_up_done = False
-        self.phase_1_hold_start = None
-        self.phase_2_hold_start = None
-        self.suction_hold_start = None
-        self.post_up_hold_start = None
+        self.robot2_up_started = False; self.robot2_up_done = False
+        self.phase_1_hold_start = None; self.phase_2_hold_start = None
+        self.suction_hold_start = None; self.post_up_hold_start = None
         self.unlock_triggered = False
-        self.hold_pos_1 = None
-        self.hold_pos_2 = None
-        self.table_hold_pos = None
-        self.table_motion_done = False
-        self.initial_pos_1 = None
-        self.initial_pos_2 = None
+        self.hold_pos_1 = None; self.hold_pos_2 = None
+        self.table_hold_pos = None; self.table_motion_done = False
+        self.initial_pos_1 = None; self.initial_pos_2 = None
         self.post_table_sequence_stage = 0
         self.post_table_stage_start = None
-        self.rotation_hold_start = None
-        self.rotation_hold_pos = None
-        self.rotation_done = False
-        self.rotation_started = False
-        self.rotation_final_hold_start = None
-        self.rotation_final_hold_pos = None
-        self.rotation_final_done = False
-        self.mold_gripper_closed = False
-        self.mold_gripper_released = False
+        self.rotation_hold_start = None; self.rotation_hold_pos = None
+        self.rotation_done = False; self.rotation_started = False
+        self.rotation_final_hold_start = None; self.rotation_final_hold_pos = None; self.rotation_final_done = False
+        self.mold_gripper_closed = False; self.mold_gripper_released = False
         self.mold_sg2_gripper_closed = False
         self.assembly_sequence_stage = 0
         self.assembly_stage_start = None
         self.lid_assy_hold_pos = None
-        self.assembly_rotation_hold_pos = None
-        self.assembly_gripper_closed = False
-        self.assembly_gripper_released = False
+        self.assembly_rotation_hold_pos = None; 
+        self.assembly_gripper_closed = False; self.assembly_gripper_released = False
+        self.m1013_ik_solver = None
+        self.eef_waypoints = []
+        self.eef_motion_started = False
+        self.eef_motion_finished = False
+        self.eef_default_orientation = None
         self._apply_m1013_default_configuration()
 
         self._set_lid_assy_damping(1e3)
@@ -634,6 +700,8 @@ class DualRobotController:
         if self.assembly_sequence_stage >= 7:
             self._hold_lid_assy_position(lid_pos)
             self._hold_assembly_rotation(assembly_rot_pos)
+            if self.rotation_final_done:
+                self._drive_m1013_to_final_pose()
 
     def step(self):
         needs_init = False
