@@ -197,11 +197,12 @@ class DualRobotController:
         joint_positions = self.m1013_robot.get_joint_positions()
         if joint_positions is None or len(joint_positions) == 0:
             # Physics Simulation View not ready yet, so skip the motion gracefully
-            print(
-                "[M1013 IK] Joint positions are unavailable (physics view not initialized); "
-                "skipping end-effector motion."
-            )
-            self.eef_motion_finished = True
+            if not getattr(self, "m1013_physics_not_ready_notified", False):
+                print(
+                    "[M1013 IK] Joint positions are unavailable (physics view not initialized); "
+                    "skipping end-effector motion."
+                )
+                self.m1013_physics_not_ready_notified = True
             return None, None
         # Isaac Sim 5.1 introduced a keyword-only signature for the Lula solver's
         # compute_forward_kinematics method. Use keyword arguments for the
