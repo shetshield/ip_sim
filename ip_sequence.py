@@ -54,6 +54,13 @@ class DualRobotController:
             "tn__NT251101A3011_uDDl3V0l19d9V1/gripper/Cylinder"
         )
 
+        # [M1013 Robot]
+        self.m1013_root_prim = "/World/ip_model/m1013/root_joint"
+        self.m1013_config_path = "/Users/shets/Downloads/software/isaac_sim/model/m1013_lula.yaml"
+        self.m1013_urdf_path = "/Users/shets/Downloads/software/isaac_sim/model/m1013.urdf"
+        self.m1013_default_revolute_deg = np.array([-90.0, 5.0, -145.0, 0.0, -40.0, 0.0])
+        self.m1013_default_prismatic = np.zeros(4, dtype=float)
+
         self.cone_prim_path = (
             "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__HA980DW1_l8d3o4Z0/"
             "tn__HA980DWHOPPER1_xEt58c8u0/Cone/pd"
@@ -101,8 +108,24 @@ class DualRobotController:
         self.assembly_rotation_subset = ArticulationSubset(self.assembly_rotation, [self.assembly_rotation_joint])
         self.stage = omni.usd.get_context().get_stage()
 
+        self._apply_m1013_default_configuration()
+
         self.reset_logic()
         print("Controller Ready: Wait-Verify-Move Logic")
+
+    def _apply_m1013_default_configuration(self):
+        """Teleport the M1013 robot to its default configuration at sim start."""
+        prim = self.stage.GetPrimAtPath(self.m1013_root_prim)
+        if not prim.IsValid():
+            return
+
+        articulation = Articulation(self.m1013_root_prim)
+        default_positions = np.concatenate([
+            np.deg2rad(self.m1013_default_revolute_deg),
+            self.m1013_default_prismatic,
+        ])
+        articulation.set_joint_positions(default_positions)
+        print(f"M1013 default configuration applied to {self.m1013_root_prim}.")
 
     def reset_logic(self):
         self.phase_1_done = False
@@ -139,6 +162,7 @@ class DualRobotController:
         self.assembly_rotation_hold_pos = None
         self.assembly_gripper_closed = False
         self.assembly_gripper_released = False
+        self._apply_m1013_default_configuration()
 
         self._set_lid_assy_damping(1e3)
 
