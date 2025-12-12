@@ -5,6 +5,7 @@ import omni.kit.commands
 import omni.usd
 import time
 from pxr import Gf, Usd, UsdGeom
+import inspect
 
 try:
     from isaacsim.robot_motion.motion_generation import ArticulationKinematicsSolver, LulaKinematicsSolver
@@ -229,27 +230,82 @@ class DualRobotController:
         orientation_np = np.asarray(self.eef_default_orientation, dtype=float)
         joint_guess_list = joint_guess.tolist()
 
-        try:
-            # Isaac Sim 5.1 accepts keyword-only arguments for the Lula solver.
-            ik_result = self.m1013_ik_solver.compute_inverse_kinematics(
-                target_position=target_pos_np,
-                target_orientation=orientation_np,
-                initial_joint_positions=joint_guess_list,
-            )
-        except TypeError:
+        def _call_inverse_kinematics():
+            """Call Lula IK while adapting to differing function signatures."""
+            ik_fn = self.m1013_ik_solver.compute_inverse_kinematics
+            signature = inspect.signature(ik_fn)
+            params = list(signature.parameters.values())
+            positional_params = [
+                p for p in params if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            ]
+
+            orientation_param_names = {"target_orientation", "orientation", "quat", "target_quaternion"}
+            initial_guess_names = {
+                "initial_joint_positions",
+                "initial_position_guess",
+                "initial_joint_guess",
+                "initial_joint_state",
+            }
+
+            def _keyword_attempt(name):
+                if name in signature.parameters:
+                    return ik_fn(
+                        target_position=target_pos_np,
+                        target_orientation=orientation_np,
+                        **{name: joint_guess_list},
+                    )
+                return None
+
+            # Prefer keyword calls when the signature explicitly lists the parameter.
+            for guess_name in initial_guess_names:
+                try:
+                    result = _keyword_attempt(guess_name)
+                    if result is not None:
+                        return result
+                except TypeError:
+                    pass
+
+            # Without an initial guess keyword, try a simple keyword call.
             try:
-                # Older versions expect positional arguments.
-                ik_result = self.m1013_ik_solver.compute_inverse_kinematics(
-                    target_pos_np,
-                    orientation_np,
-                    joint_guess_list,
-                )
+                if {"target_position", "target_orientation"}.issubset(signature.parameters):
+                    return ik_fn(target_position=target_pos_np, target_orientation=orientation_np)
             except TypeError:
-                # Fall back again for builds where the solver omits the initial guess parameter.
-                ik_result = self.m1013_ik_solver.compute_inverse_kinematics(
-                    target_pos_np,
-                    orientation_np,
-                )
+                pass
+
+            # Fall back to positional calls based on the declared parameter order so the
+            # orientation argument is placed correctly for both (pos, ori, guess) and
+            # (pos, guess, ori) layouts.
+            orientation_index = None
+            for idx, param in enumerate(positional_params):
+                if param.name in orientation_param_names:
+                    orientation_index = idx
+                    break
+
+            if orientation_index is not None:
+                args = [None] * max(len(positional_params), orientation_index + 1)
+                args[0] = target_pos_np
+                args[orientation_index] = orientation_np
+
+                if len(args) > orientation_index + 1:
+                    args[orientation_index + 1] = joint_guess_list
+
+                try:
+                    return ik_fn(*args)
+                except TypeError:
+                    pass
+
+            # Last resort: rely on the legacy positional layout.
+            try:
+                return ik_fn(target_pos_np, orientation_np, joint_guess_list)
+            except TypeError:
+                return ik_fn(target_pos_np, orientation_np)
+
+        try:
+            ik_result = _call_inverse_kinematics()
+        except Exception as exc:
+            print(f"[M1013 IK] Failed to compute inverse kinematics: {exc}")
+            self.eef_motion_finished = True
+            return
 
         if hasattr(ik_result, "joint_positions"):
             solved_positions = np.array(ik_result.joint_positions)
