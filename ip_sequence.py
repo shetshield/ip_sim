@@ -76,6 +76,7 @@ class DualRobotController:
         self.m1013_default_prismatic = np.zeros(4, dtype=float)
         self.m1013_end_effector_frame = "eef"
         self.m1013_robot = Articulation(self.m1013_root_prim)
+        self.m1013_art_kin_solver = None
 
         self.final_eef_target = np.array([-736.948, -11.0, -669.432]) / 1000.0
         self.eef_path_steps = 20
@@ -165,6 +166,15 @@ class DualRobotController:
                 # Avoid raising a TypeError when the signature differs across Isaac Sim versions.
                 self.eef_motion_finished = True
                 return False
+
+        if ArticulationKinematicsSolver is not None and self.m1013_art_kin_solver is None:
+            try:
+                self.m1013_art_kin_solver = ArticulationKinematicsSolver(
+                    self.m1013_robot, self.m1013_ik_solver, self.m1013_end_effector_frame
+                )
+            except Exception as exc:
+                print(f"[M1013 IK] ArticulationKinematicsSolver creation failed: {exc}")
+                self.m1013_art_kin_solver = None
 
         return True
 
@@ -256,6 +266,33 @@ class DualRobotController:
         # converting to lists even when juggling different API signatures.
         target_pos_np = np.asarray(target_position, dtype=float)
         orientation_np = self._normalize_orientation(self.eef_default_orientation)
+
+        base_pose = self.m1013_robot.get_world_poses()
+        if base_pose is not None and hasattr(self.m1013_ik_solver, "set_robot_base_pose"):
+            try:
+                base_t, base_q = base_pose
+                base_t = np.asarray(base_t)
+                base_q = np.asarray(base_q)
+                if base_t.ndim > 1:
+                    base_t = base_t[0]
+                if base_q.ndim > 1:
+                    base_q = base_q[0]
+                self.m1013_ik_solver.set_robot_base_pose(base_t, base_q)
+            except Exception as exc:
+                print(f"[M1013 IK] Failed to set robot base pose: {exc}")
+
+        if self.m1013_art_kin_solver is not None:
+            try:
+                action, success = self.m1013_art_kin_solver.compute_inverse_kinematics(
+                    target_pos_np, orientation_np
+                )
+                if success:
+                    self.m1013_robot.apply_action(action)
+                else:
+                    print("[M1013 IK] IK did not converge; no action applied")
+                return
+            except Exception as exc:
+                print(f"[M1013 IK] ArticulationKinematicsSolver IK failed: {exc}")
 
         def _call_inverse_kinematics():
             """Call Lula IK while adapting to differing function signatures."""
@@ -411,9 +448,10 @@ class DualRobotController:
         self.assembly_sequence_stage = 0
         self.assembly_stage_start = None
         self.lid_assy_hold_pos = None
-        self.assembly_rotation_hold_pos = None; 
+        self.assembly_rotation_hold_pos = None;
         self.assembly_gripper_closed = False; self.assembly_gripper_released = False
         self.m1013_ik_solver = None
+        self.m1013_art_kin_solver = None
         self.m1013_ik_unavailable_notified = False
         self.eef_waypoints = []
         self.eef_motion_started = False
