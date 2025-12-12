@@ -78,9 +78,8 @@ class DualRobotController:
         self.m1013_robot = Articulation(self.m1013_root_prim)
         self.m1013_art_kin_solver = None
 
-        self.final_eef_target = np.array([-736.948, -11.0, -669.432]) / 1000.0
+        self.final_eef_target = np.array([0, 1.02, 0.6])
         self.eef_path_steps = 20
-        self.eef_default_orientation = None
         self.eef_waypoints = []
         self.eef_motion_started = False
         self.eef_motion_finished = False
@@ -229,17 +228,9 @@ class DualRobotController:
         return self._extract_pose(pose)
 
     def _prepare_eef_waypoints(self):
-        current_pos, current_orientation = self._get_current_m1013_pose()
-        if current_pos is None or current_orientation is None:
+        current_pos, _ = self._get_current_m1013_pose()
+        if current_pos is None:
             return False
-
-        if self.eef_default_orientation is None:
-            # Some Isaac Sim builds may return a pose without a quaternion, so
-            # keep a safe default instead of passing None into the IK solver.
-            if current_orientation is None:
-                self.eef_default_orientation = np.array([0.0, 0.0, 0.0, 1.0])
-            else:
-                self.eef_default_orientation = current_orientation
 
         direction = self.final_eef_target - current_pos
         for step in range(1, self.eef_path_steps + 1):
@@ -265,8 +256,8 @@ class DualRobotController:
 
         return None, None
 
-    def _solve_and_apply_m1013(self, target_position):
-        """Compute and apply IK, keeping orientations as numpy arrays for Lula."""
+    def _solve_and_apply_m1013(self, target_position):␊
+        """Compute and apply position-only IK to avoid misusing rotation matrices."""
 
         joint_guess = self.m1013_robot.get_joint_positions()
 
@@ -279,10 +270,7 @@ class DualRobotController:
             joint_guess = np.asarray(joint_guess, dtype=float)
             joint_guess_list = joint_guess.tolist()
 
-        # Lula expects NumPy arrays for quaternions (it accesses ``shape``), so avoid
-        # converting to lists even when juggling different API signatures.
         target_pos_np = np.asarray(target_position, dtype=float)
-        orientation_np = self._normalize_orientation(self.eef_default_orientation)
 
         base_t, base_q = self._try_get_base_pose()
         if base_t is not None and base_q is not None and hasattr(self.m1013_ik_solver, "set_robot_base_pose"):
@@ -296,9 +284,7 @@ class DualRobotController:
 
         if self.m1013_art_kin_solver is not None:
             try:
-                action, success = self.m1013_art_kin_solver.compute_inverse_kinematics(
-                    target_pos_np, orientation_np
-                )
+                action, success = self.m1013_art_kin_solver.compute_inverse_kinematics(target_pos_np)
                 if success:
                     self.m1013_robot.apply_action(action)
                 else:
@@ -316,7 +302,6 @@ class DualRobotController:
                 p for p in params if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
             ]
 
-            orientation_param_names = {"target_orientation", "orientation", "quat", "target_quaternion"}
             initial_guess_names = {
                 "initial_joint_positions",
                 "initial_position_guess",
@@ -328,7 +313,6 @@ class DualRobotController:
                 if name in signature.parameters and joint_guess_list is not None:
                     return ik_fn(
                         target_position=target_pos_np,
-                        target_orientation=orientation_np,
                         **{name: joint_guess_list},
                     )
                 return None
@@ -344,44 +328,25 @@ class DualRobotController:
 
             # Without an initial guess keyword, try a simple keyword call.
             try:
-                if {"target_position", "target_orientation"}.issubset(signature.parameters):
-                    return ik_fn(target_position=target_pos_np, target_orientation=orientation_np)
+                if {"target_position"}.issubset(signature.parameters):
+                    return ik_fn(target_position=target_pos_np)
             except TypeError:
                 pass
 
             # Fall back to positional calls based on the declared parameter order so the
-            # orientation argument is placed correctly for both (pos, ori, guess) and
-            # (pos, guess, ori) layouts.
-            orientation_index = None
-            for idx, param in enumerate(positional_params):
-                if param.name in orientation_param_names:
-                    orientation_index = idx
-                    break
-
-            if orientation_index is not None:
-                args = [None] * max(len(positional_params), orientation_index + 1)
-                args[0] = target_pos_np
-                args[orientation_index] = orientation_np
-
-                if len(args) > orientation_index + 1 and joint_guess_list is not None:
-                    args[orientation_index + 1] = joint_guess_list
-                else:
-                    while args and args[-1] is None:
-                        args.pop()
+            # guess argument is placed correctly when supported.
+            if positional_params:
+                args = [target_pos_np]
+                if len(positional_params) > 1 and joint_guess_list is not None:
+                    args.append(joint_guess_list)
 
                 try:
                     return ik_fn(*args)
                 except TypeError:
                     pass
 
-            # Last resort: rely on the legacy positional layout.
-            if joint_guess_list is not None:
-                try:
-                    return ik_fn(target_pos_np, orientation_np, joint_guess_list)
-                except TypeError:
-                    pass
-
-            return ik_fn(target_pos_np, orientation_np)
+            # Last resort: rely on the legacy positional layout with only the target position.
+            return ik_fn(target_pos_np)
 
         try:
             ik_result = _call_inverse_kinematics()
@@ -396,29 +361,6 @@ class DualRobotController:
             solved_positions = np.array(ik_result)
 
         self.m1013_robot.set_joint_positions(solved_positions)
-
-    def _normalize_orientation(self, orientation):
-        """Ensure target orientation is a quaternion the IK solver can consume."""
-        if orientation is None:
-            return np.array([0.0, 0.0, 0.0, 1.0])
-
-        try:
-            orientation_np = np.asarray(orientation, dtype=float).reshape(-1)
-        except Exception:
-            # Fall back to a safe default when the input cannot be coerced to
-            # a float array; some solver builds attempt ``astype`` internally
-            # and will otherwise raise an AttributeError on ``None``.
-            return np.array([0.0, 0.0, 0.0, 1.0])
-
-        # Lula's IK expects a quaternion; some Isaac Sim versions return a
-        # 3-length vector for Euler angles from forward kinematics. Pad with a
-        # neutral w-component so the solver doesn't index past the array.
-        if orientation_np.shape[-1] == 3:
-            orientation_np = np.concatenate([orientation_np, np.array([1.0])])
-        elif orientation_np.shape[-1] > 4:
-            orientation_np = orientation_np[:4]
-
-        return orientation_np
 
     def _drive_m1013_to_final_pose(self):
         if self.eef_motion_finished:
@@ -469,7 +411,6 @@ class DualRobotController:
         self.eef_waypoints = []
         self.eef_motion_started = False
         self.eef_motion_finished = False
-        self.eef_default_orientation = None
         self._apply_m1013_default_configuration()
 
         self._set_lid_assy_damping(1e3)
