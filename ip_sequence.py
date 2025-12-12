@@ -74,7 +74,7 @@ class DualRobotController:
         self.table_stop_threshold = 0.3799
         self.rotation_joint = "idx1_r_joint"
         self.rotation_target = np.deg2rad(-45.0)
-        self.rotation_tolerance = np.deg2rad(0.05)
+        self.rotation_tolerance = np.deg2rad(0.01)
         self.rotation_kp = 6.0
         self.rotation_max_speed = 1.0
         self.lid_assy_joint = "Lid_Assy_p_joint"
@@ -254,6 +254,14 @@ class DualRobotController:
         damping_attr = self.stage.GetAttributeAtPath(self.lid_assy_damping_attr_path)
         if damping_attr and damping_attr.IsValid():
             damping_attr.Set(damping_value)
+
+    def _update_orientation_xy(self, prim, x_deg: float = 90.0, y_deg: float = 0.0):
+        """Update rotateXYZ so x/y match requested angles while preserving z."""
+        rotate_attr = prim.GetAttribute("xformOp:rotateXYZ")
+        if rotate_attr and rotate_attr.IsValid():
+            current_rotate = rotate_attr.Get()
+            z_value = current_rotate[2] if current_rotate is not None else 0.0
+            rotate_attr.Set(Gf.Vec3d(x_deg, y_deg, z_value))
 
     def run_post_table_sequence(self):
         # Sequence starts after Body_Table_p_joint reaches stop threshold
@@ -527,6 +535,7 @@ class DualRobotController:
                                 target_rigid_attr.Set(False)
 
                             target_translate_attr.Set(new_translate)
+                            self._update_orientation_xy(target_prim)
 
                             if target_rigid_attr and target_rigid_attr.IsValid():
                                 target_rigid_attr.Set(True)
