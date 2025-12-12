@@ -248,6 +248,23 @@ class DualRobotController:
 
         return True
 
+    def _try_get_base_pose(self):
+        """Return the robot base pose while supporting multiple Isaac Sim APIs."""
+
+        # Single articulation API
+        if hasattr(self.m1013_robot, "get_world_pose"):
+            return self.m1013_robot.get_world_pose()
+
+        # View API (batched)
+        if hasattr(self.m1013_robot, "get_world_poses"):
+            t, q = self.m1013_robot.get_world_poses()
+            t = np.asarray(t); q = np.asarray(q)
+            if t.ndim > 1: t = t[0]
+            if q.ndim > 1: q = q[0]
+            return t, q
+
+        return None, None
+
     def _solve_and_apply_m1013(self, target_position):
         """Compute and apply IK, keeping orientations as numpy arrays for Lula."""
 
@@ -267,17 +284,13 @@ class DualRobotController:
         target_pos_np = np.asarray(target_position, dtype=float)
         orientation_np = self._normalize_orientation(self.eef_default_orientation)
 
-        base_pose = self.m1013_robot.get_world_poses()
-        if base_pose is not None and hasattr(self.m1013_ik_solver, "set_robot_base_pose"):
+        base_t, base_q = self._try_get_base_pose()
+        if base_t is not None and base_q is not None and hasattr(self.m1013_ik_solver, "set_robot_base_pose"):
             try:
-                base_t, base_q = base_pose
-                base_t = np.asarray(base_t)
-                base_q = np.asarray(base_q)
-                if base_t.ndim > 1:
-                    base_t = base_t[0]
-                if base_q.ndim > 1:
-                    base_q = base_q[0]
-                self.m1013_ik_solver.set_robot_base_pose(base_t, base_q)
+                self.m1013_ik_solver.set_robot_base_pose(
+                    np.asarray(base_t, dtype=float),
+                    np.asarray(base_q, dtype=float),
+                )
             except Exception as exc:
                 print(f"[M1013 IK] Failed to set robot base pose: {exc}")
 
