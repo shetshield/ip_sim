@@ -108,8 +108,8 @@ class DualRobotController:
         self.lid_assy_joint = "Lid_Assy_p_joint"
         self.lid_assy_speed = 0.1
         self.lid_assy_kp = 5.0
-        self.lid_assy_first_stop = 0.56
-        self.lid_assy_second_stop = 0.69
+        self.lid_assy_first_stop = 0.056
+        self.lid_assy_second_stop = 0.07
         self.assembly_move_timeout = 2.0
         self.assembly_rotation_joint = "Assy_Assem_r_joint"
         self.assembly_rotation_speed = -15.0
@@ -227,7 +227,7 @@ class DualRobotController:
         # Lula expects NumPy arrays for quaternions (it accesses ``shape``), so avoid
         # converting to lists even when juggling different API signatures.
         target_pos_np = np.asarray(target_position, dtype=float)
-        orientation_np = np.asarray(self.eef_default_orientation, dtype=float)
+        orientation_np = self._normalize_orientation(self.eef_default_orientation)
         joint_guess_list = joint_guess.tolist()
 
         def _call_inverse_kinematics():
@@ -314,6 +314,18 @@ class DualRobotController:
 
         self.m1013_robot.set_joint_positions(solved_positions)
 
+    def _normalize_orientation(self, orientation):
+        """Ensure target orientation is a quaternion the IK solver can consume."""
+        orientation_np = np.asarray(orientation, dtype=float)
+
+        # Lula's IK expects a quaternion; some Isaac Sim versions return a
+        # 3-length vector for Euler angles from forward kinematics. Pad with a
+        # neutral w-component so the solver doesn't index past the array.
+        if orientation_np.shape[-1] == 3:
+            orientation_np = np.concatenate([orientation_np, np.array([1.0])])
+
+        return orientation_np
+
     def _drive_m1013_to_final_pose(self):
         if self.eef_motion_finished:
             return
@@ -379,6 +391,12 @@ class DualRobotController:
 
         self.mold_sg2_gripper_closed = False
 
+        cylinder_prim = self.stage.GetPrimAtPath(self.cylinder_prim_path)
+        if cylinder_prim.IsValid():
+            collision_attr = cylinder_prim.GetAttribute("physics:collisionEnabled")
+            if collision_attr and collision_attr.IsValid():
+                collision_attr.Set(True)
+        
         assembly_gripper_cylinder_prim = self.stage.GetPrimAtPath(self.assembly_gripper_cylinder_path)
         if assembly_gripper_cylinder_prim.IsValid():
             collision_attr = assembly_gripper_cylinder_prim.GetAttribute("physics:collisionEnabled")
