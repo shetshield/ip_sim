@@ -325,10 +325,13 @@ class DualRobotController:
                     pass
 
             # Last resort: rely on the legacy positional layout.
-            try:
-                return ik_fn(target_pos_np, orientation_np, joint_guess_list)
-            except TypeError:
-                return ik_fn(target_pos_np, orientation_np)
+            if joint_guess_list is not None:
+                try:
+                    return ik_fn(target_pos_np, orientation_np, joint_guess_list)
+                except TypeError:
+                    pass
+
+            return ik_fn(target_pos_np, orientation_np)
 
         try:
             ik_result = _call_inverse_kinematics()
