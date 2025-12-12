@@ -7,11 +7,17 @@ import time
 from pxr import Gf, Usd, UsdGeom
 
 try:
-    from omni.isaac.motion_generation.lula.ik_solver import LulaKinematicsSolver
+    from isaacsim.robot_motion.motion_generation import ArticulationKinematicsSolver, LulaKinematicsSolver
     LULA_IK_AVAILABLE = True
 except ImportError:
-    LulaKinematicsSolver = None
-    LULA_IK_AVAILABLE = False
+    try:
+        from omni.isaac.motion_generation.lula.ik_solver import LulaKinematicsSolver
+        ArticulationKinematicsSolver = None
+        LULA_IK_AVAILABLE = True
+    except ImportError:
+        LulaKinematicsSolver = None
+        ArticulationKinematicsSolver = None
+        LULA_IK_AVAILABLE = False
 
 # [Interface Import]
 try:
