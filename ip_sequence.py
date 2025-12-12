@@ -141,12 +141,24 @@ class DualRobotController:
         print(f"M1013 default configuration applied to {self.m1013_root_prim}.")
 
     def _ensure_m1013_ik_solver(self):
+        if not LULA_IK_AVAILABLE:
+            if not getattr(self, "m1013_ik_unavailable_notified", False):
+                print(
+                    "[M1013 IK] LulaKinematicsSolver is not available. Skipping end-effector motion.")
+                self.m1013_ik_unavailable_notified = True
+
+            # Skip the motion rather than raising a TypeError when the solver is missing.
+            self.eef_motion_finished = True
+            return False
+
         if self.m1013_ik_solver is None:
             self.m1013_ik_solver = LulaKinematicsSolver(
                 robot_description_path=self.m1013_urdf_path,
                 kinematics_config_path=self.m1013_config_path,
                 end_effector_frame_name=self.m1013_end_effector_frame,
             )
+
+        return True
 
     def _extract_pose(self, pose):
         if hasattr(pose, "p") and hasattr(pose, "q"):
@@ -193,7 +205,8 @@ class DualRobotController:
         if self.eef_motion_finished:
             return
 
-        self._ensure_m1013_ik_solver()
+        if not self._ensure_m1013_ik_solver():
+            return
 
         if not self.eef_motion_started:
             self._prepare_eef_waypoints()
@@ -230,6 +243,7 @@ class DualRobotController:
         self.assembly_rotation_hold_pos = None; 
         self.assembly_gripper_closed = False; self.assembly_gripper_released = False
         self.m1013_ik_solver = None
+        self.m1013_ik_unavailable_notified = False
         self.eef_waypoints = []
         self.eef_motion_started = False
         self.eef_motion_finished = False
