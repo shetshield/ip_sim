@@ -168,33 +168,18 @@ class DualRobotController:
         return True
 
     def _create_m1013_ik_solver(self):
-        """Create a Lula IK solver while handling signature differences across Isaac Sim versions."""
-        solver_kwargs = {
-            "robot_description_path": self.m1013_urdf_path,
-            "end_effector_frame_name": self.m1013_end_effector_frame,
-        }
-
-        candidate_configs = [
-            {"kinematics_config_path": self.m1013_config_path},
-            {"kinematics_config": self.m1013_config_path},
-            {"kinematics_config_data": self.m1013_config_path},
-            {},
-        ]
-
-        for extra_kwargs in candidate_configs:
-            try:
-                return LulaKinematicsSolver(**solver_kwargs, **extra_kwargs)
-            except TypeError:
-                continue
-            except Exception as exc:  # pragma: no cover - defensive logging for runtime envs
-                print(f"[M1013 IK] LulaKinematicsSolver creation failed: {exc}")
-                return None
-
-        print(
-            "[M1013 IK] Unable to construct LulaKinematicsSolver. "
-            "Check the kinematics configuration parameters for this Isaac Sim version."
-        )
-        return None
+        # Isaac Sim 5.1: LulaKinematicsSolver(robot_description_path=YAML, urdf_path=URDF)
+        try:
+            solver = LulaKinematicsSolver(
+                robot_description_path=self.m1013_config_path,
+                urdf_path=self.m1013_urdf_path,
+            )
+            # 디버그: URDF에 존재하는 frame 목록 확인 (eef가 있어야 함)
+            print("[M1013 IK] Valid frame names:", solver.get_all_frame_names())
+            return solver
+        except Exception as exc:
+            print(f"[M1013 IK] LulaKinematicsSolver creation failed: {exc}")
+            return None
 
     def _extract_pose(self, pose):
         if hasattr(pose, "p") and hasattr(pose, "q"):
