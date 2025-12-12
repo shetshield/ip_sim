@@ -195,6 +195,14 @@ class DualRobotController:
 
     def _get_current_m1013_pose(self):
         joint_positions = self.m1013_robot.get_joint_positions()
+        if joint_positions is None or len(joint_positions) == 0:
+            # Physics Simulation View not ready yet, so skip the motion gracefully
+            print(
+                "[M1013 IK] Joint positions are unavailable (physics view not initialized); "
+                "skipping end-effector motion."
+            )
+            self.eef_motion_finished = True
+            return None, None
         # Isaac Sim 5.1 introduced a keyword-only signature for the Lula solver's
         # compute_forward_kinematics method. Use keyword arguments for the
         # joint positions and fall back to positional arguments for older
@@ -211,6 +219,9 @@ class DualRobotController:
 
     def _prepare_eef_waypoints(self):
         current_pos, current_orientation = self._get_current_m1013_pose()
+        if current_pos is None or current_orientation is None:
+            return False
+
         if self.eef_default_orientation is None:
             self.eef_default_orientation = current_orientation
 
@@ -218,6 +229,8 @@ class DualRobotController:
         for step in range(1, self.eef_path_steps + 1):
             alpha = step / self.eef_path_steps
             self.eef_waypoints.append(current_pos + alpha * direction)
+
+        return True
 
     def _solve_and_apply_m1013(self, target_position):
         """Compute and apply IK, keeping orientations as numpy arrays for Lula."""
@@ -334,7 +347,9 @@ class DualRobotController:
             return
 
         if not self.eef_motion_started:
-            self._prepare_eef_waypoints()
+            if not self._prepare_eef_waypoints():
+                return
+
             self.eef_motion_started = True
 
         if not self.eef_waypoints:
