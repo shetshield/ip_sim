@@ -202,6 +202,15 @@ class DualRobotController:
             raise ValueError("Unsupported pose format from IK solver")
         return position, orientation
 
+    def _get_current_m1013_pose(self):
+        """Return current end-effector pose using FK (position, orientation)."""
+
+        # solver 준비 안 됐으면 준비
+        if getattr(self, "m1013_ik_solver", None) is None:
+            if not self._ensure_m1013_ik_solver():
+                return None, None
+
+        # (권장) FK 전에도 base pose 동기화
         base_t, base_q = self._try_get_base_pose()
         if base_t is not None and base_q is not None and hasattr(self.m1013_ik_solver, "set_robot_base_pose"):
             try:
@@ -210,29 +219,28 @@ class DualRobotController:
                     np.asarray(base_q, dtype=float),
                 )
             except Exception as exc:
-                print(f"[M1013 IK] Failed to set robot base pose before FK: {exc}")
+                print(f"[M1013 FK] Failed to set robot base pose before FK: {exc}")
 
         joint_positions = self.m1013_robot.get_joint_positions()
         if joint_positions is None or len(joint_positions) == 0:
-            # Physics Simulation View not ready yet, so skip the motion gracefully
             if not getattr(self, "m1013_physics_not_ready_notified", False):
-                print(
-                    "[M1013 IK] Joint positions are unavailable (physics view not initialized); "
-                    "skipping end-effector motion."
-                )
+                print("[M1013 FK] Joint positions unavailable (physics view not initialized).")
                 self.m1013_physics_not_ready_notified = True
             return None, None
-        # Isaac Sim 5.1 introduced a keyword-only signature for the Lula solver's
-        # compute_forward_kinematics method. Use keyword arguments for the
-        # joint positions and fall back to positional arguments for older
-        # versions to avoid "missing positional argument" TypeErrors.
+
+        jp_list = np.asarray(joint_positions, dtype=float).tolist()
+
+        # Isaac Sim 버전별 FK 시그니처 차이 대응
         try:
             pose = self.m1013_ik_solver.compute_forward_kinematics(
-                joint_positions=joint_positions.tolist(),
+                joint_positions=jp_list,
                 frame_name=self.m1013_end_effector_frame,
             )
         except TypeError:
-            pose = self.m1013_ik_solver.compute_forward_kinematics(joint_positions.tolist())
+            try:
+                pose = self.m1013_ik_solver.compute_forward_kinematics(jp_list, self.m1013_end_effector_frame)
+            except TypeError:
+                pose = self.m1013_ik_solver.compute_forward_kinematics(jp_list)
 
         return self._extract_pose(pose)
 
