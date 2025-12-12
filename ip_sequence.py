@@ -243,11 +243,19 @@ class DualRobotController:
 
         joint_guess = self.m1013_robot.get_joint_positions()
 
+        # Older solver builds can choke when ``initial_joint_positions`` is None,
+        # attempting ``None.astype`` internally. Normalize the guess to a float
+        # list only when available and avoid passing ``None`` entirely.
+        if joint_guess is None:
+            joint_guess_list = None
+        else:
+            joint_guess = np.asarray(joint_guess, dtype=float)
+            joint_guess_list = joint_guess.tolist()
+
         # Lula expects NumPy arrays for quaternions (it accesses ``shape``), so avoid
         # converting to lists even when juggling different API signatures.
         target_pos_np = np.asarray(target_position, dtype=float)
         orientation_np = self._normalize_orientation(self.eef_default_orientation)
-        joint_guess_list = joint_guess.tolist()
 
         def _call_inverse_kinematics():
             """Call Lula IK while adapting to differing function signatures."""
@@ -267,7 +275,7 @@ class DualRobotController:
             }
 
             def _keyword_attempt(name):
-                if name in signature.parameters:
+                if name in signature.parameters and joint_guess_list is not None:
                     return ik_fn(
                         target_position=target_pos_np,
                         target_orientation=orientation_np,
@@ -305,8 +313,11 @@ class DualRobotController:
                 args[0] = target_pos_np
                 args[orientation_index] = orientation_np
 
-                if len(args) > orientation_index + 1:
+                if len(args) > orientation_index + 1 and joint_guess_list is not None:
                     args[orientation_index + 1] = joint_guess_list
+                else:
+                    while args and args[-1] is None:
+                        args.pop()
 
                 try:
                     return ik_fn(*args)
