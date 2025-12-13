@@ -245,6 +245,14 @@ class DualRobotController:
         return self._extract_pose(pose)
 
     def _prepare_eef_waypoints(self):
+        target_world = self._get_prim_world_translation_m("/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__NT251101A101_tCX59b7o0/tn__moldA181_k88X2Lu0a6i0/mold")
+        if target_world is None:
+            return False
+        else:
+            target_world[1] = target_world[1] + 0.3
+            target_world[2] = target_world[2] - 0.3
+        self.final_eef_target = target_world
+
         current_pos, _ = self._get_current_m1013_pose()
         if current_pos is None:
             return False
@@ -255,6 +263,19 @@ class DualRobotController:
             self.eef_waypoints.append(current_pos + alpha * direction)
 
         return True
+
+    def _get_prim_world_translation_m(self, prim_path: str):
+        prim = self.stage.GetPrimAtPath(prim_path)
+        if not prim.IsValid():
+            print(f"[Target] Invalid prim: {prim_path}")
+            return None
+
+        cache = UsdGeom.XformCache(Usd.TimeCode.Default())
+        mat = cache.GetLocalToWorldTransform(prim)
+        t = mat.ExtractTranslation()
+
+        meters_per_unit = UsdGeom.GetStageMetersPerUnit(self.stage)
+        return np.array([t[0], t[1], t[2]], dtype=float) * meters_per_unit
 
     def _try_get_base_pose(self):
         """Return the robot base pose while supporting multiple Isaac Sim APIs."""
