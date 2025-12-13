@@ -7,8 +7,7 @@ from typing import Iterable, List
 
 from PIL import Image
 
-
-ITER_PATTERN = re.compile(r"best_iter(\d{7})_score.*\.png$")
+ITER_PATTERN = re.compile(r"best_iter(\d+)_score.*\\.png$", re.IGNORECASE)
 
 
 def _find_layout0(output_dir: Path) -> Path:
@@ -21,11 +20,15 @@ def _find_layout0(output_dir: Path) -> Path:
 def _find_iteration_frames(output_dir: Path) -> List[Path]:
     matches = []
     for path in output_dir.glob("*.png"):
-        if path.name.startswith("layout0"):
+        if path.name.lower().startswith("layout0"):
             continue
         match = ITER_PATTERN.fullmatch(path.name)
         if match:
             matches.append((int(match.group(1)), path))
+    if not matches:
+        raise FileNotFoundError(
+            "No iteration frames found matching 'best_iter*' pattern in the output directory."
+        )
     matches.sort(key=lambda item: (item[0], item[1].name))
     return [path for _, path in matches]
 
@@ -34,8 +37,8 @@ def collect_frame_paths(output_dir: Path) -> List[Path]:
     """Collect PNGs in the order required for GIF creation.
 
     The sequence always begins with a file named ``layout0*.png`` followed by PNG
-    files that match ``best_iterXXXXXXX_score*.png`` ordered by the 7-digit
-    iteration number.
+    files that match ``best_iter<digits>_score*.png`` ordered by the iteration
+    number extracted from the filename.
     """
 
     if not output_dir.is_dir():
@@ -56,14 +59,13 @@ def create_gif(png_paths: Iterable[Path], output_path: Path, duration: float = 0
         duration: Frame duration in seconds.
     """
 
-    png_paths = list(png_paths)
-    if not png_paths:
-        raise ValueError("No PNG paths provided to create GIF.")
-
     frames = []
     for path in png_paths:
         with Image.open(path) as image:
             frames.append(image.convert("RGB"))
+
+    if not frames:
+        raise ValueError("No PNG paths provided to create GIF.")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     frames[0].save(
