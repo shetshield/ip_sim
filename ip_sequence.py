@@ -316,7 +316,7 @@ class DualRobotController:
 
         return None, None
 
-    def _solve_and_apply_m1013(self, target_position):
+    def _solve_and_apply_m1013(self, target_position, target_orientation=None):
         """Compute and apply IK, including the target orientation when supported."""
 
         joint_guess = self.m1013_robot.get_joint_positions()
