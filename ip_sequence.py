@@ -70,6 +70,7 @@ class DualRobotController:
 
         # [M1013 Robot]
         self.m1013_root_prim = "/World/ip_model/m1013/root_joint"
+        self.m1013_target_pose_path = "/World/ip_model/m1013/target_pose1"
         self.m1013_config_path = "/Users/shets/Downloads/software/isaac_sim/model/m1013_lula.yaml"
         self.m1013_urdf_path = "/Users/shets/Downloads/software/isaac_sim/model/m1013.urdf"
         self.m1013_default_revolute_deg = np.array([-90.0, 5.0, -145.0, 0.0, -40.0, 0.0])
@@ -277,6 +278,27 @@ class DualRobotController:
         meters_per_unit = UsdGeom.GetStageMetersPerUnit(self.stage)
         return np.array([t[0], t[1], t[2]], dtype=float) * meters_per_unit
 
+    def _get_m1013_target_orientation(self):
+        """Return the target quaternion (w, x, y, z) from target_pose1 if available."""
+
+        prim = self.stage.GetPrimAtPath(self.m1013_target_pose_path)
+        if not prim.IsValid():
+            if not getattr(self, "_m1013_target_pose_missing_logged", False):
+                print(f"[M1013 Target] Invalid prim: {self.m1013_target_pose_path}")
+                self._m1013_target_pose_missing_logged = True
+            return None
+
+        orient_attr = prim.GetAttribute("xformOp:orient")
+        if orient_attr and orient_attr.IsValid():
+            quat = orient_attr.Get()
+            if quat is not None:
+                return np.array([quat.GetReal(), *quat.GetImaginary()], dtype=float)
+
+        cache = UsdGeom.XformCache(Usd.TimeCode.Default())
+        mat = cache.GetLocalToWorldTransform(prim)
+        rot = mat.ExtractRotation().GetQuat()
+        return np.array([rot.GetReal(), *rot.GetImaginary()], dtype=float)
+
     def _try_get_base_pose(self):
         """Return the robot base pose while supporting multiple Isaac Sim APIs."""
 
@@ -295,7 +317,7 @@ class DualRobotController:
         return None, None
 
     def _solve_and_apply_m1013(self, target_position):
-        """Compute and apply position-only IK to avoid misusing rotation matrices."""
+        """Compute and apply IK, including the target orientation when supported."""
 
         joint_guess = self.m1013_robot.get_joint_positions()
 
@@ -348,12 +370,27 @@ class DualRobotController:
                 "initial_joint_state",
             }
 
+            orientation_param_names = [
+                "target_orientation",
+                "target_orientation_quat",
+                "target_orientation_quaternion",
+            ]
+
+            def _maybe_add_orientation(kwargs):
+                if target_orientation is None:
+                    return kwargs
+
+                for name in orientation_param_names:
+                    if name in signature.parameters:
+                        kwargs[name] = target_orientation
+                        break
+                return kwargs
+
             def _keyword_attempt(name):
                 if name in signature.parameters and joint_guess_list is not None:
-                    return ik_fn(
-                        target_position=target_pos_np,
-                        **{name: joint_guess_list},
-                    )
+                    kwargs = {"target_position": target_pos_np, name: joint_guess_list}
+                    kwargs = _maybe_add_orientation(kwargs)
+                    return ik_fn(**kwargs)
                 return None
 
             # Prefer keyword calls when the signature explicitly lists the parameter.
@@ -368,7 +405,8 @@ class DualRobotController:
             # Without an initial guess keyword, try a simple keyword call.
             try:
                 if {"target_position"}.issubset(signature.parameters):
-                    return ik_fn(target_position=target_pos_np)
+                    kwargs = _maybe_add_orientation({"target_position": target_pos_np})
+                    return ik_fn(**kwargs)
             except TypeError:
                 pass
 
@@ -379,12 +417,21 @@ class DualRobotController:
                 if len(positional_params) > 1 and joint_guess_list is not None:
                     args.append(joint_guess_list)
 
+                if len(positional_params) > len(args) and target_orientation is not None:
+                    args.append(target_orientation)
+
                 try:
                     return ik_fn(*args)
                 except TypeError:
                     pass
 
             # Last resort: rely on the legacy positional layout with only the target position.
+            if target_orientation is not None:
+                try:
+                    return ik_fn(target_pos_np, target_orientation)
+                except TypeError:
+                    pass
+
             return ik_fn(target_pos_np)
 
         try:
@@ -424,7 +471,8 @@ class DualRobotController:
             return
 
         target_position = self.eef_waypoints[0]
-        if self._solve_and_apply_m1013(target_position):
+        target_orientation = self._get_m1013_target_orientation()
+        if self._solve_and_apply_m1013(target_position, target_orientation):
             self.eef_waypoints.pop(0)
 
     def reset_logic(self):
