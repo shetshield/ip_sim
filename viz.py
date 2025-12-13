@@ -25,10 +25,7 @@ def _find_iteration_frames(output_dir: Path) -> List[Path]:
         match = ITER_PATTERN.fullmatch(path.name)
         if match:
             matches.append((int(match.group(1)), path))
-    if not matches:
-        raise FileNotFoundError(
-            "No iteration frames found matching 'best_iter*' pattern in the output directory."
-        )
+
     matches.sort(key=lambda item: (item[0], item[1].name))
     return [path for _, path in matches]
 
@@ -46,6 +43,9 @@ def collect_frame_paths(output_dir: Path) -> List[Path]:
 
     layout0 = _find_layout0(output_dir)
     iteration_frames = _find_iteration_frames(output_dir)
+
+    if not iteration_frames:
+        return [layout0]
 
     return [layout0, *iteration_frames]
 
