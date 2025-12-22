@@ -76,6 +76,7 @@ class DualRobotController:
         self.m1013_default_revolute_deg = np.array([-90.0, 5.0, -145.0, 0.0, -40.0, 0.0])
         self.m1013_default_prismatic = np.zeros(4, dtype=float)
         self.m1013_end_effector_frame = "eef"
+        self.m1013_target_orientation_base = np.array([0.70710678, -0.70710678, 0.0, 0.0], dtype=float)
         self.m1013_robot = Articulation(self.m1013_root_prim)
         self.m1013_art_kin_solver = None
 
@@ -278,26 +279,43 @@ class DualRobotController:
         meters_per_unit = UsdGeom.GetStageMetersPerUnit(self.stage)
         return np.array([t[0], t[1], t[2]], dtype=float) * meters_per_unit
 
+    def _normalize_quat(self, quat):
+        quat = np.asarray(quat, dtype=float)
+        norm = np.linalg.norm(quat)
+        return quat if norm == 0 else quat / norm
+
+    def _quat_multiply_wxyz(self, q1, q2):
+        w1, x1, y1, z1 = q1
+        w2, x2, y2, z2 = q2
+        return np.array(
+            [
+                w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+                w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+                w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+                w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+            ],
+            dtype=float,
+        )
+
     def _get_m1013_target_orientation(self):
-        """Return the target quaternion (w, x, y, z) from target_pose1 if available."""
+        """Return the target quaternion (w, x, y, z) aligned to the world frame."""
 
-        prim = self.stage.GetPrimAtPath(self.m1013_target_pose_path)
-        if not prim.IsValid():
-            if not getattr(self, "_m1013_target_pose_missing_logged", False):
-                print(f"[M1013 Target] Invalid prim: {self.m1013_target_pose_path}")
-                self._m1013_target_pose_missing_logged = True
-            return None
+        q_target_base = self.m1013_target_orientation_base
+        base_t, base_q = self._try_get_base_pose()
 
-        orient_attr = prim.GetAttribute("xformOp:orient")
-        if orient_attr and orient_attr.IsValid():
-            quat = orient_attr.Get()
-            if quat is not None:
-                return np.array([quat.GetReal(), *quat.GetImaginary()], dtype=float)
+        if base_q is None:
+            return q_target_base
 
-        cache = UsdGeom.XformCache(Usd.TimeCode.Default())
-        mat = cache.GetLocalToWorldTransform(prim)
-        rot = mat.ExtractRotation().GetQuat()
-        return np.array([rot.GetReal(), *rot.GetImaginary()], dtype=float)
+        base_q = np.asarray(base_q, dtype=float)
+        if base_q.shape != (4,):
+            if not getattr(self, "_m1013_base_quat_invalid_logged", False):
+                print(f"[M1013 Target] Unexpected base quaternion shape: {base_q.shape}")
+                self._m1013_base_quat_invalid_logged = True
+            return q_target_base
+
+        base_q = self._normalize_quat(base_q)
+        q_target_base = self._normalize_quat(q_target_base)
+        return self._quat_multiply_wxyz(base_q, q_target_base)
 
     def _try_get_base_pose(self):
         """Return the robot base pose while supporting multiple Isaac Sim APIs."""
