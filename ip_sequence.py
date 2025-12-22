@@ -129,6 +129,7 @@ class DualRobotController:
         self.lid_assy_subset = ArticulationSubset(self.lid_assy, [self.lid_assy_joint])
         self.assembly_rotation_subset = ArticulationSubset(self.assembly_rotation, [self.assembly_rotation_joint])
         self.stage = omni.usd.get_context().get_stage()
+        self.stage_mpu = float(UsdGeom.GetStageMetersPerUnit(self.stage)) if self.stage is not None else 1.0
 
         self._apply_m1013_default_configuration()
 
@@ -188,6 +189,8 @@ class DualRobotController:
             )
             # 디버그: URDF에 존재하는 frame 목록 확인 (eef가 있어야 함)
             print("[M1013 IK] Valid frame names:", solver.get_all_frame_names())
+            if hasattr(solver, "set_max_iterations"):
+                solver.set_max_iterations(300)
             return solver
         except Exception as exc:
             print(f"[M1013 IK] LulaKinematicsSolver creation failed: {exc}")
@@ -247,22 +250,39 @@ class DualRobotController:
         return self._extract_pose(pose)
 
     def _prepare_eef_waypoints(self):
-        target_world = self._get_prim_world_translation_m("/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__NT251101A101_tCX59b7o0/tn__moldA181_k88X2Lu0a6i0/mold")
+        self.eef_waypoints = []
+
+        target_world = self._get_prim_world_translation_stage("/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__NT251101A101_tCX59b7o0/tn__moldA181_k88X2Lu0a6i0/mold")
         if target_world is None:
             return False
-        else:
-            target_world[1] = target_world[1] + 0.3
-            target_world[2] = target_world[2] - 0.3
+
+        stage_mpu = self.stage_mpu if self.stage_mpu != 0 else 1.0
+        y_offset_stage = 0.3 / stage_mpu
+        z_offset_stage = -0.3 / stage_mpu
+        target_world[1] += y_offset_stage
+        target_world[2] += z_offset_stage
         self.final_eef_target = target_world
 
-        current_pos, _ = self._get_current_m1013_pose()
-        if current_pos is None:
+        current_pos, current_q = self._get_current_m1013_pose()
+        if current_pos is None or current_q is None:
             return False
 
+        goal_q = self._get_m1013_target_orientation()
         direction = self.final_eef_target - current_pos
+
+        rot_start_alpha = 0.6
+
         for step in range(1, self.eef_path_steps + 1):
             alpha = step / self.eef_path_steps
-            self.eef_waypoints.append(current_pos + alpha * direction)
+            pos = current_pos + alpha * direction
+
+            if alpha <= rot_start_alpha:
+                q = current_q
+            else:
+                beta = (alpha - rot_start_alpha) / (1.0 - rot_start_alpha)
+                q = self._quat_slerp_wxyz(current_q, goal_q, beta)
+
+            self.eef_waypoints.append((pos, q))
 
         return True
 
@@ -278,6 +298,17 @@ class DualRobotController:
 
         meters_per_unit = UsdGeom.GetStageMetersPerUnit(self.stage)
         return np.array([t[0], t[1], t[2]], dtype=float) * meters_per_unit
+
+    def _get_prim_world_translation_stage(self, prim_path: str):
+        prim = self.stage.GetPrimAtPath(prim_path)
+        if not prim.IsValid():
+            print(f"[Target] Invalid prim: {prim_path}")
+            return None
+
+        cache = UsdGeom.XformCache(Usd.TimeCode.Default())
+        mat = cache.GetLocalToWorldTransform(prim)
+        t = mat.ExtractTranslation()
+        return np.array([t[0], t[1], t[2]], dtype=float)
 
     def _normalize_quat(self, quat):
         quat = np.asarray(quat, dtype=float)
@@ -296,6 +327,26 @@ class DualRobotController:
             ],
             dtype=float,
         )
+
+    def _quat_slerp_wxyz(self, q0, q1, t):
+        q0 = self._normalize_quat(q0)
+        q1 = self._normalize_quat(q1)
+
+        # shortest path
+        if np.dot(q0, q1) < 0.0:
+            q1 = -q1
+
+        dot = np.clip(np.dot(q0, q1), -1.0, 1.0)
+        if dot > 0.9995:
+            return self._normalize_quat(q0 + t * (q1 - q0))
+
+        theta0 = np.arccos(dot)
+        sin_theta0 = np.sin(theta0)
+        theta = theta0 * t
+
+        s0 = np.sin(theta0 - theta) / sin_theta0
+        s1 = np.sin(theta) / sin_theta0
+        return self._normalize_quat(s0 * q0 + s1 * q1)
 
     def _get_m1013_target_orientation(self):
         """Return the target quaternion (w, x, y, z) aligned to the world frame."""
@@ -365,12 +416,30 @@ class DualRobotController:
                 ik_fn = self.m1013_art_kin_solver.compute_inverse_kinematics
                 sig = inspect.signature(ik_fn)
 
-                if target_orientation is not None and "target_orientation" in sig.parameters:
-                    action, success = ik_fn(target_position=target_pos_np, target_orientation=target_orientation)
-                elif target_orientation is not None and len(sig.parameters) >= 2:
-                    action, success = ik_fn(target_pos_np, target_orientation)
-                else:
-                    action, success = ik_fn(target_pos_np)
+                pos_tol_m = 0.005
+                stage_mpu = self.stage_mpu if self.stage_mpu != 0 else 1.0
+                pos_tol_stage = pos_tol_m / stage_mpu
+                ori_tol = np.deg2rad(5.0)
+
+                tol_kwargs = {}
+                if "position_tolerance" in sig.parameters:
+                    tol_kwargs["position_tolerance"] = pos_tol_stage
+                if "orientation_tolerance" in sig.parameters:
+                    tol_kwargs["orientation_tolerance"] = ori_tol
+
+                try:
+                    if target_orientation is not None and "target_orientation" not in sig.parameters and len(sig.parameters) >= 2:
+                        action, success = ik_fn(target_pos_np, target_orientation, **tol_kwargs)
+                    else:
+                        kwargs = {"target_position": target_pos_np, **tol_kwargs}
+                        if target_orientation is not None and "target_orientation" in sig.parameters:
+                            kwargs["target_orientation"] = target_orientation
+                        action, success = ik_fn(**kwargs)
+                except TypeError:
+                    if target_orientation is not None and len(sig.parameters) >= 2:
+                        action, success = ik_fn(target_pos_np, target_orientation)
+                    else:
+                        action, success = ik_fn(target_pos_np)
 
                 if success:
                     self.m1013_robot.apply_action(action)
@@ -497,8 +566,7 @@ class DualRobotController:
             self.eef_motion_finished = True
             return
 
-        target_position = self.eef_waypoints[0]
-        target_orientation = self._get_m1013_target_orientation()
+        target_position, target_orientation = self.eef_waypoints[0]
         if self._solve_and_apply_m1013(target_position, target_orientation):
             self.eef_waypoints.pop(0)
 
