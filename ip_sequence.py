@@ -85,6 +85,7 @@ class DualRobotController:
         self.eef_waypoints = []
         self.eef_motion_started = False
         self.eef_motion_finished = False
+        self.eef_motion_phase = 1
 
         self.cone_prim_path = (
             "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__HA980DW1_l8d3o4Z0/"
@@ -298,6 +299,26 @@ class DualRobotController:
                 q = self._quat_slerp_wxyz(current_q, goal_q, beta)
 
             self.eef_waypoints.append((pos, q))
+
+        return True
+
+    def _prepare_eef_offset_waypoints(self, start_position, orientation):
+        """After reaching the target pose, move an additional +0.3 m along Y from the current EEF position."""
+
+        self.eef_waypoints = []
+
+        stage_mpu = self.stage_mpu if self.stage_mpu != 0 else 1.0
+        offset_stage = 0.3 / stage_mpu
+
+        start_position = np.asarray(start_position, dtype=float)
+        target_position = start_position + np.array([0.0, offset_stage, 0.0])
+
+        direction = target_position - start_position
+
+        for step in range(1, self.eef_path_steps + 1):
+            alpha = step / self.eef_path_steps
+            pos = start_position + alpha * direction
+            self.eef_waypoints.append((pos, orientation))
 
         return True
 
@@ -618,8 +639,21 @@ class DualRobotController:
             self.eef_motion_started = True
 
         if not self.eef_waypoints:
-            self.eef_motion_finished = True
-            return
+            if self.eef_motion_phase == 1:
+                # Prepare the secondary +0.3 m move along Y from the current EEF pose.
+                current_pos, current_q = self._get_current_m1013_pose()
+                if current_pos is None or current_q is None:
+                    self.eef_motion_finished = True
+                    return
+
+                if not self._prepare_eef_offset_waypoints(current_pos, current_q):
+                    self.eef_motion_finished = True
+                    return
+
+                self.eef_motion_phase = 2
+            else:
+                self.eef_motion_finished = True
+                return
 
         target_position, target_orientation = self.eef_waypoints[0]
         if self._solve_and_apply_m1013(target_position, target_orientation):
@@ -653,6 +687,7 @@ class DualRobotController:
         self.eef_waypoints = []
         self.eef_motion_started = False
         self.eef_motion_finished = False
+        self.eef_motion_phase = 1
         self._apply_m1013_default_configuration()
 
         self._set_lid_assy_damping(1e3)
