@@ -362,7 +362,16 @@ class DualRobotController:
 
         if self.m1013_art_kin_solver is not None:
             try:
-                action, success = self.m1013_art_kin_solver.compute_inverse_kinematics(target_pos_np)
+                ik_fn = self.m1013_art_kin_solver.compute_inverse_kinematics
+                sig = inspect.signature(ik_fn)
+
+                if target_orientation is not None and "target_orientation" in sig.parameters:
+                    action, success = ik_fn(target_position=target_pos_np, target_orientation=target_orientation)
+                elif target_orientation is not None and len(sig.parameters) >= 2:
+                    action, success = ik_fn(target_pos_np, target_orientation)
+                else:
+                    action, success = ik_fn(target_pos_np)
+
                 if success:
                     self.m1013_robot.apply_action(action)
                 else:
