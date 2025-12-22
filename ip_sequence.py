@@ -82,8 +82,6 @@ class DualRobotController:
 
         self.final_eef_target = np.array([0, 1.03, 0.6])
         self.eef_path_steps = 20
-        self.eef_post_lift_distance = 0.3
-        self.eef_post_lift_steps = 10
         self.eef_waypoints = []
         self.eef_motion_started = False
         self.eef_motion_finished = False
@@ -300,14 +298,6 @@ class DualRobotController:
                 q = self._quat_slerp_wxyz(current_q, goal_q, beta)
 
             self.eef_waypoints.append((pos, q))
-
-        lift_offset = np.array([0.0, 0.0, self.eef_post_lift_distance / stage_mpu], dtype=float)
-        lift_start_pos = self.final_eef_target
-
-        for step in range(1, self.eef_post_lift_steps + 1):
-            alpha = step / self.eef_post_lift_steps
-            pos = lift_start_pos + alpha * lift_offset
-            self.eef_waypoints.append((pos, goal_q))
 
         return True
 
