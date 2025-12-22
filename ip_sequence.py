@@ -205,6 +205,21 @@ class DualRobotController:
             orientation = np.array(pose[1])
         else:
             raise ValueError("Unsupported pose format from IK solver")
+
+        if orientation.shape in [(3, 3), (4, 4)]:
+            try:
+                orientation = self._quat_from_rotation_matrix(orientation)
+            except ValueError as exc:
+                if not getattr(self, "_m1013_orientation_invalid_logged", False):
+                    print(f"[M1013 FK] Unexpected orientation matrix shape {orientation.shape}: {exc}")
+                    self._m1013_orientation_invalid_logged = True
+                orientation = self.m1013_target_orientation_base
+        elif orientation.shape != (4,):
+            if not getattr(self, "_m1013_orientation_invalid_logged", False):
+                print(f"[M1013 FK] Unexpected orientation shape {orientation.shape}")
+                self._m1013_orientation_invalid_logged = True
+            orientation = self.m1013_target_orientation_base
+
         return position, orientation
 
     def _get_current_m1013_pose(self):
@@ -314,6 +329,46 @@ class DualRobotController:
         quat = np.asarray(quat, dtype=float)
         norm = np.linalg.norm(quat)
         return quat if norm == 0 else quat / norm
+
+    def _quat_from_rotation_matrix(self, rot):
+        """Convert a 3x3 (or 4x4 homogenous) rotation matrix to a (w, x, y, z) quaternion."""
+        rot = np.asarray(rot, dtype=float)
+        if rot.shape == (4, 4):
+            rot = rot[:3, :3]
+
+        if rot.shape != (3, 3):
+            raise ValueError(f"Rotation matrix must be 3x3 or 4x4, got {rot.shape}")
+
+        trace = np.trace(rot)
+        if trace > 0.0:
+            s = 2.0 * np.sqrt(trace + 1.0)
+            w = 0.25 * s
+            x = (rot[2, 1] - rot[1, 2]) / s
+            y = (rot[0, 2] - rot[2, 0]) / s
+            z = (rot[1, 0] - rot[0, 1]) / s
+        else:
+            # Find the major diagonal element
+            if rot[0, 0] > rot[1, 1] and rot[0, 0] > rot[2, 2]:
+                s = 2.0 * np.sqrt(1.0 + rot[0, 0] - rot[1, 1] - rot[2, 2])
+                w = (rot[2, 1] - rot[1, 2]) / s
+                x = 0.25 * s
+                y = (rot[0, 1] + rot[1, 0]) / s
+                z = (rot[0, 2] + rot[2, 0]) / s
+            elif rot[1, 1] > rot[2, 2]:
+                s = 2.0 * np.sqrt(1.0 + rot[1, 1] - rot[0, 0] - rot[2, 2])
+                w = (rot[0, 2] - rot[2, 0]) / s
+                x = (rot[0, 1] + rot[1, 0]) / s
+                y = 0.25 * s
+                z = (rot[1, 2] + rot[2, 1]) / s
+            else:
+                s = 2.0 * np.sqrt(1.0 + rot[2, 2] - rot[0, 0] - rot[1, 1])
+                w = (rot[1, 0] - rot[0, 1]) / s
+                x = (rot[0, 2] + rot[2, 0]) / s
+                y = (rot[1, 2] + rot[2, 1]) / s
+                z = 0.25 * s
+
+        quat = np.array([w, x, y, z], dtype=float)
+        return self._normalize_quat(quat)
 
     def _quat_multiply_wxyz(self, q1, q2):
         w1, x1, y1, z1 = q1
