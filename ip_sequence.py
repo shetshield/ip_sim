@@ -87,7 +87,7 @@ class DualRobotController:
         self.eef_motion_started = False
         self.eef_motion_finished = False
         self.eef_motion_phase = 1
-        self.pick_vertical_offset_m = 0.12
+        self.pick_vertical_offset_m = 0.0
         self.pick_horizontal_offset_m = np.array([0.08, 0.0, 0.0], dtype=float)
         self.post_pick_travel_m = np.array([0.0, 0.3, 0.0], dtype=float)
         self.eef_subgoals = []
@@ -425,7 +425,7 @@ class DualRobotController:
 
         vertical_offset = np.array([0.0, 0.0, self.pick_vertical_offset_m / stage_mpu], dtype=float)
         horizontal_offset = np.asarray(self.pick_horizontal_offset_m, dtype=float) / stage_mpu
-        post_pick_offset = np.asarray(self.post_pick_travel_m, dtype=float) / stage_mpu
+        post_pick_offset = -np.asarray(self.post_pick_travel_m, dtype=float) / stage_mpu
 
         approach_position = pick_position + vertical_offset + horizontal_offset
         pre_pick_position = pick_position + vertical_offset
@@ -437,7 +437,7 @@ class DualRobotController:
             {"type": "move", "waypoints": self._interpolate_pose_waypoints(current_pos, current_orientation, approach_position, pick_orientation)},
             {"type": "move", "waypoints": self._interpolate_pose_waypoints(approach_position, pick_orientation, pre_pick_position, pick_orientation)},
             {"type": "move", "waypoints": self._interpolate_pose_waypoints(pre_pick_position, pick_orientation, final_pick_position, pick_orientation)},
-            {"type": "gripper", "close": True, "hold": self.hold_duration},␊
+            {"type": "gripper", "close": True, "hold": self.hold_duration},
             {"type": "move", "waypoints": self._interpolate_pose_waypoints(final_pick_position, pick_orientation, retreat_position, pick_orientation)},
             {"type": "move", "waypoints": self._interpolate_pose_waypoints(retreat_position, pick_orientation, post_pick_position, pick_orientation)},
         ]
