@@ -379,6 +379,31 @@ class DualRobotController:
             waypoints.append((pos, orientation))
         return waypoints
 
+    def _interpolate_pose_waypoints(self, start_position, start_orientation, target_position, target_orientation):
+        """Generate waypoints that interpolate both position and orientation via slerp."""
+
+        start_position = np.asarray(start_position, dtype=float)
+        target_position = np.asarray(target_position, dtype=float)
+        direction = target_position - start_position
+
+        # Fallback to whichever quaternion is available to keep orientation defined.
+        if start_orientation is None and target_orientation is None:
+            raise ValueError("At least one orientation must be provided for pose interpolation")
+
+        start_q = start_orientation if start_orientation is not None else target_orientation
+        target_q = target_orientation if target_orientation is not None else start_orientation
+
+        start_q = self._normalize_quat(start_q)
+        target_q = self._normalize_quat(target_q)
+
+        waypoints = []
+        for step in range(1, self.eef_path_steps + 1):
+            alpha = step / self.eef_path_steps
+            pos = start_position + alpha * direction
+            q = self._quat_slerp_wxyz(start_q, target_q, alpha)
+            waypoints.append((pos, q))
+        return waypoints
+
     def _plan_m1013_subgoals(self):
         """Plan a multi-stage pick sequence with explicit sub-goals and gripper actions."""
 
@@ -387,10 +412,14 @@ class DualRobotController:
             self.eef_motion_finished = True
             return False
 
-        current_pos, _ = self._get_current_m1013_pose()
+        current_pos, current_orientation = self._get_current_m1013_pose()
         if current_pos is None:
             self.eef_motion_finished = True
             return False
+
+        # Default to target orientation when the current pose orientation is unavailable.
+        if current_orientation is None:
+            current_orientation = pick_orientation
 
         stage_mpu = self.stage_mpu if self.stage_mpu != 0 else 1.0
 
@@ -405,12 +434,12 @@ class DualRobotController:
         post_pick_position = retreat_position + post_pick_offset
 
         self.eef_subgoals = [
-            {"type": "move", "waypoints": self._interpolate_waypoints(current_pos, approach_position, pick_orientation)},
-            {"type": "move", "waypoints": self._interpolate_waypoints(approach_position, pre_pick_position, pick_orientation)},
-            {"type": "move", "waypoints": self._interpolate_waypoints(pre_pick_position, final_pick_position, pick_orientation)},
-            {"type": "gripper", "close": True, "hold": self.hold_duration},
-            {"type": "move", "waypoints": self._interpolate_waypoints(final_pick_position, retreat_position, pick_orientation)},
-            {"type": "move", "waypoints": self._interpolate_waypoints(retreat_position, post_pick_position, pick_orientation)},
+            {"type": "move", "waypoints": self._interpolate_pose_waypoints(current_pos, current_orientation, approach_position, pick_orientation)},
+            {"type": "move", "waypoints": self._interpolate_pose_waypoints(approach_position, pick_orientation, pre_pick_position, pick_orientation)},
+            {"type": "move", "waypoints": self._interpolate_pose_waypoints(pre_pick_position, pick_orientation, final_pick_position, pick_orientation)},
+            {"type": "gripper", "close": True, "hold": self.hold_duration},␊
+            {"type": "move", "waypoints": self._interpolate_pose_waypoints(final_pick_position, pick_orientation, retreat_position, pick_orientation)},
+            {"type": "move", "waypoints": self._interpolate_pose_waypoints(retreat_position, pick_orientation, post_pick_position, pick_orientation)},
         ]
         self.current_subgoal_index = 0
         self.eef_waypoints = []
