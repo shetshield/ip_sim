@@ -79,8 +79,21 @@ class DualRobotController:
         self.m1013_target_orientation_base = np.array([0.70710678, -0.70710678, 0.0, 0.0], dtype=float)
         self.m1013_robot = Articulation(self.m1013_root_prim)
         self.m1013_art_kin_solver = None
+        self.m1013_gripper_joint_names = [
+            "f1_p_joint",
+            "f2_p_joint",
+            "f3_p_joint",
+            "f4_p_joint",
+        ]
+        self.m1013_gripper_close_targets = {
+            "f1_p_joint": -0.02,
+            "f2_p_joint": 0.02,
+            "f3_p_joint": -0.02,
+            "f4_p_joint": 0.02,
+        }
+        self.m1013_gripper_open_target = 0.0
 
-        self.final_eef_target = np.array([0, 1.03, 0.6])
+        self.final_eef_target = np.array([0, 1.03, 0.6])        
         self.final_eef_orientation = None
         self.eef_path_steps = 20
         self.eef_waypoints = []
@@ -136,6 +149,7 @@ class DualRobotController:
         self.rotation_subset = ArticulationSubset(self.rotation, [self.rotation_joint])
         self.lid_assy_subset = ArticulationSubset(self.lid_assy, [self.lid_assy_joint])
         self.assembly_rotation_subset = ArticulationSubset(self.assembly_rotation, [self.assembly_rotation_joint])
+        self.m1013_gripper_subset = ArticulationSubset(self.m1013_robot, self.m1013_gripper_joint_names)
         self.stage = omni.usd.get_context().get_stage()
         self.stage_mpu = float(UsdGeom.GetStageMetersPerUnit(self.stage)) if self.stage is not None else 1.0
 
@@ -786,6 +800,8 @@ class DualRobotController:
             return
 
         if subgoal["type"] == "gripper":
+            self._set_m1013_gripper_state(subgoal.get("close", True))
+
             if self.subgoal_started_at is None:
                 self.send_gripper_command(subgoal.get("close", True))
                 self.subgoal_started_at = time.time()
@@ -878,8 +894,24 @@ class DualRobotController:
             attr = prim.GetAttribute("physxRigidBody:lockedPosAxis")
             if attr: attr.Set(0)
 
+    def _set_m1013_gripper_state(self, close: bool):
+        """Position-control the M1013 prismatic gripper joints for open/close states."""
+        if not self.m1013_robot.handles_initialized:
+            return
+
+        targets = []
+        for joint_name in self.m1013_gripper_joint_names:
+            if close:
+                targets.append(self.m1013_gripper_close_targets.get(joint_name, self.m1013_gripper_open_target))
+            else:
+                targets.append(self.m1013_gripper_open_target)
+
+        self.m1013_gripper_subset.apply_action(joint_positions=np.array(targets, dtype=float))
+
     def send_gripper_command(self, close: bool):
         """명령만 전송 (상태 확인은 나중에)"""
+        self._set_m1013_gripper_state(close)
+
         if not IS_INTERFACE_AVAILABLE or sg_interface is None:
             return
 
