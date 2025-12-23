@@ -87,6 +87,12 @@ class DualRobotController:
         self.eef_motion_started = False
         self.eef_motion_finished = False
         self.eef_motion_phase = 1
+        self.pick_vertical_offset_m = 0.12
+        self.pick_horizontal_offset_m = np.array([0.08, 0.0, 0.0], dtype=float)
+        self.post_pick_travel_m = np.array([0.0, 0.3, 0.0], dtype=float)
+        self.eef_subgoals = []
+        self.current_subgoal_index = 0
+        self.subgoal_started_at = None
 
         self.cone_prim_path = (
             "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__HA980DW1_l8d3o4Z0/"
@@ -338,6 +344,77 @@ class DualRobotController:
             pos = start_position + alpha * direction
             self.eef_waypoints.append((pos, orientation))
 
+        return True
+
+    def _get_pick_target_pose(self):
+        """Return the pick pose (position, orientation) with the configured offsets applied."""
+
+        target_world = self._get_prim_world_translation_stage(
+            "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__NT251101A101_tCX59b7o0/"
+            "tn__moldA181_k88X2Lu0a6i0/mold"
+        )
+        if target_world is None:
+            return None, None
+
+        stage_mpu = self.stage_mpu if self.stage_mpu != 0 else 1.0
+        pick_offset_stage = np.array([0.0, 0.3 / stage_mpu, -0.3 / stage_mpu], dtype=float)
+        pick_position = np.asarray(target_world, dtype=float) + pick_offset_stage
+
+        goal_q = self._get_m1013_target_orientation()
+        self.final_eef_target = pick_position
+        self.final_eef_orientation = goal_q
+        return pick_position, goal_q
+
+    def _interpolate_waypoints(self, start_position, target_position, orientation):
+        """Generate a linear list of waypoints between two positions with a fixed orientation."""
+
+        start_position = np.asarray(start_position, dtype=float)
+        target_position = np.asarray(target_position, dtype=float)
+        direction = target_position - start_position
+
+        waypoints = []
+        for step in range(1, self.eef_path_steps + 1):
+            alpha = step / self.eef_path_steps
+            pos = start_position + alpha * direction
+            waypoints.append((pos, orientation))
+        return waypoints
+
+    def _plan_m1013_subgoals(self):
+        """Plan a multi-stage pick sequence with explicit sub-goals and gripper actions."""
+
+        pick_position, pick_orientation = self._get_pick_target_pose()
+        if pick_position is None or pick_orientation is None:
+            self.eef_motion_finished = True
+            return False
+
+        current_pos, _ = self._get_current_m1013_pose()
+        if current_pos is None:
+            self.eef_motion_finished = True
+            return False
+
+        stage_mpu = self.stage_mpu if self.stage_mpu != 0 else 1.0
+
+        vertical_offset = np.array([0.0, 0.0, self.pick_vertical_offset_m / stage_mpu], dtype=float)
+        horizontal_offset = np.asarray(self.pick_horizontal_offset_m, dtype=float) / stage_mpu
+        post_pick_offset = np.asarray(self.post_pick_travel_m, dtype=float) / stage_mpu
+
+        approach_position = pick_position + vertical_offset + horizontal_offset
+        pre_pick_position = pick_position + vertical_offset
+        final_pick_position = pick_position
+        retreat_position = pre_pick_position
+        post_pick_position = retreat_position + post_pick_offset
+
+        self.eef_subgoals = [
+            {"type": "move", "waypoints": self._interpolate_waypoints(current_pos, approach_position, pick_orientation)},
+            {"type": "move", "waypoints": self._interpolate_waypoints(approach_position, pre_pick_position, pick_orientation)},
+            {"type": "move", "waypoints": self._interpolate_waypoints(pre_pick_position, final_pick_position, pick_orientation)},
+            {"type": "gripper", "close": True, "hold": self.hold_duration},
+            {"type": "move", "waypoints": self._interpolate_waypoints(final_pick_position, retreat_position, pick_orientation)},
+            {"type": "move", "waypoints": self._interpolate_waypoints(retreat_position, post_pick_position, pick_orientation)},
+        ]
+        self.current_subgoal_index = 0
+        self.eef_waypoints = []
+        self.subgoal_started_at = None
         return True
 
     def _get_prim_world_translation_m(self, prim_path: str):
@@ -651,36 +728,45 @@ class DualRobotController:
             return
 
         if not self.eef_motion_started:
-            if not self._prepare_eef_waypoints():
+            if not self._plan_m1013_subgoals():
                 return
 
             self.eef_motion_started = True
 
-       if not self.eef_waypoints:
-            if self.eef_motion_phase == 1:
-                current_pos, current_q = self._get_current_m1013_pose()
-                if current_pos is None or current_q is None:
-                    self.eef_motion_finished = True
-                    return
+        if self.current_subgoal_index >= len(self.eef_subgoals):
+            self.eef_motion_finished = True
+            return
 
-                if not self._is_eef_at_final_target(current_pos, current_q):
-                    target_orientation = self.final_eef_orientation or self._get_m1013_target_orientation()
-                    self.eef_waypoints.append((self.final_eef_target, target_orientation))
-                    return
+        subgoal = self.eef_subgoals[self.current_subgoal_index]
 
-                # Prepare the secondary +0.3 m move along Y from the current EEF pose.
-                if not self._prepare_eef_offset_waypoints(current_pos, current_q):
-                    self.eef_motion_finished = True
-                    return
+        if subgoal["type"] == "move":
+            if not self.eef_waypoints:
+                self.eef_waypoints = list(subgoal["waypoints"])
 
-                self.eef_motion_phase = 2
-            else:
-                self.eef_motion_finished = True
+            if not self.eef_waypoints:
+                self.current_subgoal_index += 1
+                self.subgoal_started_at = None
                 return
 
-        target_position, target_orientation = self.eef_waypoints[0]
-        if self._solve_and_apply_m1013(target_position, target_orientation):
-            self.eef_waypoints.pop(0)
+            target_position, target_orientation = self.eef_waypoints[0]
+            if self._solve_and_apply_m1013(target_position, target_orientation):
+                self.eef_waypoints.pop(0)
+                if not self.eef_waypoints:
+                    self.current_subgoal_index += 1
+                    self.subgoal_started_at = None
+            return
+
+        if subgoal["type"] == "gripper":
+            if self.subgoal_started_at is None:
+                self.send_gripper_command(subgoal.get("close", True))
+                self.subgoal_started_at = time.time()
+                return
+
+            hold_time = subgoal.get("hold", self.hold_duration)
+            if (time.time() - self.subgoal_started_at) >= hold_time:
+                self.current_subgoal_index += 1
+                self.subgoal_started_at = None
+            return
 
     def reset_logic(self):
         self.phase_1_done = False; self.phase_2_done = False
@@ -711,7 +797,11 @@ class DualRobotController:
         self.eef_motion_started = False
         self.eef_motion_finished = False
         self.eef_motion_phase = 1
+        self.final_eef_target = None        
         self.final_eef_orientation = None
+        self.eef_subgoals = []
+        self.current_subgoal_index = 0
+        self.subgoal_started_at = None        
         self._apply_m1013_default_configuration()
 
         self._set_lid_assy_damping(1e3)
