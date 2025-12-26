@@ -892,11 +892,12 @@ class DualRobotController:
         self.assembly_sequence_stage = 0
         self.assembly_stage_start = None
         self.lid_assy_hold_pos = None
-        self.assembly_rotation_hold_pos = None;
+        self.assembly_rotation_hold_pos = None
         self.assembly_gripper_closed = False; self.assembly_gripper_released = False
         self.m1013_ik_solver = None
         self.m1013_art_kin_solver = None
         self.m1013_ik_unavailable_notified = False
+        self._m1013_effort_unavailable_logged = False        
         self.eef_waypoints = []
         self.eef_motion_started = False
         self.eef_motion_finished = False
@@ -1012,26 +1013,40 @@ class DualRobotController:
         if not self.m1013_robot.handles_initialized:
             return
 
-        effort_values = None
-        try:
-            # Isaac Sim 5.1 exposes articulation forces through the Physics Articulation Force API.
-            # SingleArticulation provides net/measured forces rather than `get_joint_efforts`.
+        def _read_efforts(source):
             for getter_name in (
-                "get_measured_joint_forces",  # Physics articulation sensor output
-                "get_net_joint_forces",       # Net forces from PhysX
-                "get_applied_joint_forces",   # Commanded/appplied drive forces
-                "get_applied_joint_efforts",  # Legacy name on older releases
+                # Physics articulation force sensor outputs (Isaac Sim 5.1 recommendation)
+                "get_measured_joint_forces",
+                # PhysX net forces
+                "get_net_joint_forces",
+                # Commanded/appplied drive forces
+                "get_applied_joint_forces",
+                # Legacy name on older Isaac Sim releases
+                "get_applied_joint_efforts",
             ):
-                getter = getattr(self.m1013_gripper_subset, getter_name, None)
+                getter = getattr(source, getter_name, None)
                 if callable(getter):
-                    effort_values = getter()
-                    break
-        except Exception as exc:
-            print(f"[M1013 Gripper] Failed to read joint efforts: {exc}")
-            return
+                    try:
+                        values = getter()
+                        if values is not None:
+                            return values
+                    except Exception as exc:
+                        print(f"[M1013 Gripper] Failed to read joint efforts via {getter_name}: {exc}")
+                        return None
+            return None
+
+        # Per the Isaac Sim 5.1 articulation force sensor docs, prefer the
+        # Physics force getters and gracefully handle platforms that do not
+        # expose them (e.g., some Windows builds).
+        effort_values = _read_efforts(self.m1013_gripper_subset)
+        if effort_values is None:
+            effort_values = _read_efforts(self.m1013_robot)
 
         if effort_values is None:
-            print("[M1013 Gripper] Joint effort readings are not available on this platform.")
+            if not self._m1013_effort_unavailable_logged:
+                print("[M1013 Gripper] Joint effort readings are not available on this platform (see Physics Effort sensor docs).")
+                self._m1013_effort_unavailable_logged = True
+            return
 
         effort_list = effort_values.tolist() if hasattr(effort_values, "tolist") else list(effort_values)
         if len(effort_list) != len(self.m1013_gripper_joint_names):
