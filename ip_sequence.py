@@ -1048,7 +1048,17 @@ class DualRobotController:
                 self._m1013_effort_unavailable_logged = True
             return
 
-        effort_list = effort_values.tolist() if hasattr(effort_values, "tolist") else list(effort_values)
+        try:
+            effort_array = np.asarray(effort_values, dtype=float).reshape(-1)
+        except Exception as exc:
+            if not getattr(self, "_m1013_effort_format_error_logged", False):
+                print(
+                    f"[M1013 Gripper] Unexpected joint effort format ({type(effort_values).__name__}): {exc}"
+                )
+                self._m1013_effort_format_error_logged = True
+            return
+
+        effort_list = effort_array.tolist()
         if len(effort_list) != len(self.m1013_gripper_joint_names):
             effort_list = effort_list[:len(self.m1013_gripper_joint_names)]
 
