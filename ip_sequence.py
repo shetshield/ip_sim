@@ -870,8 +870,21 @@ class DualRobotController:
                 # near the goal.
                 if current_pos is not None and target_pos is not None:
                     solved = self._solve_and_apply_m1013(target_pos, target_q)
+
                     if not solved:
                         self._nudge_m1013_toward_pose(current_pos, target_pos, current_q, target_q)
+                    else:
+                        # If IK returns a solution but we are still outside the tolerance,
+                        # take an additional incremental step to keep reducing the error.
+                        updated_pos, updated_q = self._get_current_m1013_pose()
+                        if updated_pos is not None:
+                            still_off = not self._is_pose_within_tolerance(
+                                updated_pos, target_pos, updated_q, target_q
+                            )
+                            if still_off:
+                                self._nudge_m1013_toward_pose(
+                                    updated_pos, target_pos, updated_q, target_q
+                                )
             return
 
     def reset_logic(self):
