@@ -86,12 +86,17 @@ class DualRobotController:
             "f4_p_joint",
         ]
         self.m1013_gripper_close_targets = {
+            "f1_p_joint": 0.0,
+            "f2_p_joint": 0.0,
+            "f3_p_joint": 0.0,
+            "f4_p_joint": 0.0,
+        }
+        self.m1013_gripper_open_targets = {
             "f1_p_joint": -0.02,
             "f2_p_joint": 0.02,
             "f3_p_joint": -0.02,
             "f4_p_joint": 0.02,
         }
-        self.m1013_gripper_open_target = 0.0
 
         self.final_eef_target = np.array([0, 1.03, 0.6])        
         self.final_eef_orientation = None
@@ -451,9 +456,9 @@ class DualRobotController:
             {"type": "move", "waypoints": self._interpolate_pose_waypoints(current_pos, current_orientation, approach_position, pick_orientation)},
             {"type": "move", "waypoints": self._interpolate_pose_waypoints(approach_position, pick_orientation, pre_pick_position, pick_orientation)},
             {"type": "move", "waypoints": self._interpolate_pose_waypoints(pre_pick_position, pick_orientation, final_pick_position, pick_orientation)},
-            {"type": "gripper", "close": True, "hold": self.hold_duration},
             {"type": "move", "waypoints": self._interpolate_pose_waypoints(final_pick_position, pick_orientation, retreat_position, pick_orientation)},
             {"type": "move", "waypoints": self._interpolate_pose_waypoints(retreat_position, pick_orientation, post_pick_position, pick_orientation)},
+            {"type": "gripper", "close": True, "hold": self.hold_duration},
         ]
         self.current_subgoal_index = 0
         self.eef_waypoints = []
@@ -877,6 +882,46 @@ class DualRobotController:
             if collision_attr and collision_attr.IsValid():
                 collision_attr.Set(True)
 
+        moldcap_prim = self.stage.GetPrimAtPath(
+            "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/"
+            "moldcap"
+        )
+        if moldcap_prim.IsValid():
+            rigid_attr = moldcap_prim.GetAttribute("physics:rigidBodyEnabled")
+            vis_attr   = moldcap_prim.GetAttribute("visibility")
+
+            moldcap_translate_attr = moldcap_prim.GetAttribute("xformOp:translate")
+            if (
+                moldcap_translate_attr
+                and moldcap_translate_attr.IsValid()
+            ):
+                moldcap_translate = moldcap_translate_attr.Get()
+
+                if moldcap_translate is not None:
+                    new_translate = Gf.Vec3d(moldcap_translate[0], 1453.0, moldcap_translate[2])
+                    if rigid_attr and rigid_attr.IsValid():
+                        rigid_attr.Set(False)
+
+                    moldcap_translate_attr.Set(new_translate)
+                    if rigid_attr and rigid_attr.IsValid():
+                        rigid_attr.Set(True)
+ 
+            if rigid_attr and vis_attr:
+                rigid_attr.Set(True); vis_attr.Set("inherited")
+        moldcap_mesh_prim = self.stage.GetPrimAtPath(
+            "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/"
+            "moldcap/Cylinder"
+        )
+        if moldcap_mesh_prim.IsValid():
+            collision_attr = moldcap_mesh_prim.GetAttribute("physics:collisionEnabled")
+            if collision_attr: collision_attr.Set(True)
+        moldcap_cyl_prim = self.stage.GetPrimAtPath(
+            "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__NT251101A101_tCX59b7o0/"
+            "tn__moldA181_k88X2Lu0a6i0/tn__moldACAP_bC6/moldcap_top"
+        )
+        if moldcap_cyl_prim.IsValid():
+            vis_attr = moldcap_cyl_prim.GetAttribute("visibility")
+            if vis_attr: vis_attr.Set("invisible")
         prim = self.stage.GetPrimAtPath(self.unlock_target_path)
         if prim.IsValid():
             attr = prim.GetAttribute("physxRigidBody:lockedPosAxis")
@@ -902,9 +947,9 @@ class DualRobotController:
         targets = []
         for joint_name in self.m1013_gripper_joint_names:
             if close:
-                targets.append(self.m1013_gripper_close_targets.get(joint_name, self.m1013_gripper_open_target))
+                targets.append(self.m1013_gripper_close_targets.get(joint_name, 0.0))
             else:
-                targets.append(self.m1013_gripper_open_target)
+                targets.append(self.m1013_gripper_open_targets.get(joint_name, 0.0))
 
         self.m1013_gripper_subset.apply_action(joint_positions=np.array(targets, dtype=float))
 
@@ -1250,7 +1295,7 @@ class DualRobotController:
             # collisions or limits).
             elapsed = time.time() - self.assembly_stage_start
 
-            if reached_target or elapsed >= 1.7 * self.assembly_move_timeout:
+            if reached_target or elapsed >= 1.5 * self.assembly_move_timeout:
                 self.lid_assy_hold_pos = self.lid_assy_subset.get_joint_positions()[0]
                 self.assembly_rotation_hold_pos = assembly_rot_pos
                 self.lid_assy_subset.apply_action(joint_velocities=np.array([0.0]))
@@ -1265,6 +1310,7 @@ class DualRobotController:
             self._hold_assembly_rotation(assembly_rot_pos)
 
             if not self.assembly_gripper_released:
+                self.send_assembly_gripper_command(False)
                 assembly_gripper_cylinder_prim = self.stage.GetPrimAtPath(self.assembly_gripper_cylinder_path)
                 if assembly_gripper_cylinder_prim.IsValid():
                     collision_attr = assembly_gripper_cylinder_prim.GetAttribute("physics:collisionEnabled")
@@ -1275,42 +1321,60 @@ class DualRobotController:
                     "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/"
                     "tn__NT251101A101_tCX59b7o0/tn__moldA181_k88X2Lu0a6i0/mold"
                 )
-                target_prim = self.stage.GetPrimAtPath(
+                moldcap_prim = self.stage.GetPrimAtPath(
                     "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/"
                     "moldcap"
                 )
+                moldcap_mesh_prim = self.stage.GetPrimAtPath(
+                    "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/"
+                    "moldcap/Cylinder"
+                )
+                moldcap_cyl_prim = self.stage.GetPrimAtPath(
+                    "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__NT251101A101_tCX59b7o0/"
+                    "tn__moldA181_k88X2Lu0a6i0/tn__moldACAP_bC6/moldcap_top"
+                )
 
-                if source_prim.IsValid() and target_prim.IsValid():
+                if source_prim.IsValid() and moldcap_prim.IsValid():
+                    moldcap_rigid_attr = moldcap_prim.GetAttribute("physics:rigidBodyEnabled")
+                    moldcap_mesh_collision_attr = moldcap_mesh_prim.GetAttribute("physics:collisionEnabled")
+                    moldcap_vis1_attr = moldcap_prim.GetAttribute("visibility")
+                    moldcap_vis2_attr = moldcap_cyl_prim.GetAttribute("visibility")
+
+                    moldcap_rigid_attr.Set(False)
+                    moldcap_mesh_collision_attr.Set(False)
+                    moldcap_vis1_attr.Set("invisible")
+                    moldcap_vis2_attr.Set("inherited")
+                    """
                     source_translate_attr = source_prim.GetAttribute("xformOp:translate")
-                    target_translate_attr = target_prim.GetAttribute("xformOp:translate")
-                    target_rigid_attr = target_prim.GetAttribute("physics:rigidBodyEnabled")
-
+                    moldcap_translate_attr = moldcap_prim.GetAttribute("xformOp:translate")
                     if (
                         source_translate_attr
                         and source_translate_attr.IsValid()
-                        and target_translate_attr
-                        and target_translate_attr.IsValid()
+                        and moldcap_translate_attr
+                        and moldcap_translate_attr.IsValid()
                     ):
                         source_translate = source_translate_attr.Get()
-                        target_translate = target_translate_attr.Get()
+                        moldcap_translate = moldcap_translate_attr.Get()
 
                         if source_translate is not None:
-                            target_y = target_translate[1] if target_translate is not None else 0.0
-                            new_translate = Gf.Vec3d(source_translate[0], target_y, source_translate[2])
-                            if target_rigid_attr and target_rigid_attr.IsValid():
-                                target_rigid_attr.Set(False)
+                            target_y = moldcap_translate[1] if moldcap_translate is not None else 0.0
+                            new_translate = Gf.Vec3d(source_translate[0], target_y+1.5, source_translate[2])
+                            if moldcap_rigid_attr and moldcap_rigid_attr.IsValid():
+                                moldcap_rigid_attr.Set(False)
 
-                            target_translate_attr.Set(new_translate)
-                            self._update_orientation_xy(target_prim)
+                            moldcap_translate_attr.Set(new_translate)
+                            self._update_orientation_xy(moldcap_prim)
 
-                            if target_rigid_attr and target_rigid_attr.IsValid():
-                                target_rigid_attr.Set(True)
-                            if not self.mold_sg2_gripper_closed:
-                                self.send_mold_sg2_gripper_command(True)
-                                self.mold_sg2_gripper_closed = True
-                            print(
-                                f"Updated moldcap translate to {new_translate} based on source {source_translate}"
-                            )
+                            if moldcap_rigid_attr and moldcap_rigid_attr.IsValid():
+                                moldcap_rigid_attr.Set(True)
+                    print(
+                        f"Updated moldcap translate to {new_translate} based on source {source_translate}"
+                    )                                
+                    """
+                    if not self.mold_sg2_gripper_closed:
+                        self.send_mold_sg2_gripper_command(True)
+                        self.mold_sg2_gripper_closed = True
+
                 self.assembly_gripper_released = True
 
                 if self.assembly_stage_start is None:
@@ -1370,6 +1434,7 @@ class DualRobotController:
         
         if needs_init:
             self.reset_logic()
+            self.reset_logic()
             self.capture_initial_positions()
             return
 
@@ -1377,21 +1442,30 @@ class DualRobotController:
         if self.robot2_up_done:
             if self.post_up_hold_start is None:
                 self.post_up_hold_start = time.time()
-            if ((time.time() - self.post_up_hold_start) >= self.hold_duration and not self.unlock_triggered):
+                self.unlock_axis()
+                moldcap_prim = self.stage.GetPrimAtPath(
+                    "/World/ip_model/ip_model/tn__NT251101A001_tCX59b7o0/tn__NT251101A2011_uDDl3V0l19d9V1/"
+                    "moldcap"
+                )
+
+                moldcap_rigid_attr = moldcap_prim.GetAttribute("physics:rigidBodyEnabled")
+                moldcap_rigid_attr.Set(False)
+                moldcap_rigid_attr.Set(True)
+            if ((time.time() - self.post_up_hold_start) >= self.hold_duration): # and not self.unlock_triggered):
                 self.unlock_axis()
                 self.unlock_triggered = True
-            if not self.table_motion_done:
-                curr_table = self.table_subset.get_joint_positions()[0]
-                if curr_table >= self.table_stop_threshold:
-                    self.table_motion_done = True
-                    self.table_hold_pos = curr_table
-                    self.table_subset.apply_action(joint_velocities=np.array([0.0]))
-                    self.post_table_sequence_stage = 1
-                    self.post_table_stage_start = None
+                if not self.table_motion_done:
+                    curr_table = self.table_subset.get_joint_positions()[0]
+                    if curr_table >= self.table_stop_threshold:
+                        self.table_motion_done = True
+                        self.table_hold_pos = curr_table
+                        self.table_subset.apply_action(joint_velocities=np.array([0.0]))
+                        self.post_table_sequence_stage = 1
+                        self.post_table_stage_start = None
+                    else:
+                        self.table_subset.apply_action(joint_velocities=np.array([self.table_up_vel]))
                 else:
-                    self.table_subset.apply_action(joint_velocities=np.array([self.table_up_vel]))
-            else:
-                self.run_post_table_sequence()
+                    self.run_post_table_sequence()
             if self.hold_pos_1 is not None:
                 curr_1 = self.subset_1.get_joint_positions()[0]
                 self.subset_1.apply_action(joint_velocities=np.array([(self.hold_pos_1 - curr_1) * 10.0]))
