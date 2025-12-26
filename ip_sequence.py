@@ -336,8 +336,6 @@ class DualRobotController:
         target_pos = np.asarray(target_pos, dtype=float)
 
         pos_error = np.linalg.norm(current_pos - target_pos)
-        print(f"current_pos: {current_pos}, target_pos: {target_pos}, pos_error: {pos_error}")
-        print(f"tolerance: {self.position_tolerance}, {self.rotation_tolerance}")
         if pos_error > self.position_tolerance:
             return False
 
@@ -349,7 +347,6 @@ class DualRobotController:
         ori_dot = abs(np.dot(current_q, target_q))
         ori_dot = np.clip(ori_dot, -1.0, 1.0)
         ori_error = 2.0 * np.arccos(ori_dot)
-        # print(f"current_q: {current_q}, target_q: {target_q}, ori_error: {ori_error}")
 
         return ori_error <= self.rotation_tolerance
 
@@ -860,6 +857,7 @@ class DualRobotController:
 
             if pose_reached or elapsed >= timeout:
                 self._set_m1013_gripper_state(subgoal.get("close", True))
+                self._log_m1013_gripper_efforts()                
                 self.current_subgoal_index += 1
                 self.subgoal_started_at = None
             else:
@@ -1008,6 +1006,34 @@ class DualRobotController:
                 targets.append(self.m1013_gripper_open_targets.get(joint_name, 0.0))
 
         self.m1013_gripper_subset.apply_action(joint_positions=np.array(targets, dtype=float))
+
+    def _log_m1013_gripper_efforts(self):
+        """Log the current efforts for the M1013 gripper joints for debugging."""
+        if not self.m1013_robot.handles_initialized:
+            return
+
+        effort_values = None
+        try:
+            if hasattr(self.m1013_gripper_subset, "get_joint_efforts"):
+                effort_values = self.m1013_gripper_subset.get_joint_efforts()
+            elif hasattr(self.m1013_gripper_subset, "get_applied_joint_efforts"):
+                effort_values = self.m1013_gripper_subset.get_applied_joint_efforts()
+        except Exception as exc:
+            print(f"[M1013 Gripper] Failed to read joint efforts: {exc}")
+            return
+
+        if effort_values is None:
+            print("[M1013 Gripper] Joint effort readings are not available on this platform.")
+            return
+
+        effort_list = effort_values.tolist() if hasattr(effort_values, "tolist") else list(effort_values)
+        if len(effort_list) != len(self.m1013_gripper_joint_names):
+            effort_list = effort_list[:len(self.m1013_gripper_joint_names)]
+
+        effort_str = ", ".join(
+            f"{name}: {effort:.4f}" for name, effort in zip(self.m1013_gripper_joint_names, effort_list)
+        )
+        print(f"[M1013 Gripper] Joint efforts -> {effort_str}")
 
     def send_gripper_command(self, close: bool):
         """명령만 전송 (상태 확인은 나중에)"""
@@ -1400,33 +1426,7 @@ class DualRobotController:
                     moldcap_mesh_collision_attr.Set(False)
                     moldcap_vis1_attr.Set("invisible")
                     moldcap_vis2_attr.Set("inherited")
-                    """
-                    source_translate_attr = source_prim.GetAttribute("xformOp:translate")
-                    moldcap_translate_attr = moldcap_prim.GetAttribute("xformOp:translate")
-                    if (
-                        source_translate_attr
-                        and source_translate_attr.IsValid()
-                        and moldcap_translate_attr
-                        and moldcap_translate_attr.IsValid()
-                    ):
-                        source_translate = source_translate_attr.Get()
-                        moldcap_translate = moldcap_translate_attr.Get()
 
-                        if source_translate is not None:
-                            target_y = moldcap_translate[1] if moldcap_translate is not None else 0.0
-                            new_translate = Gf.Vec3d(source_translate[0], target_y+1.5, source_translate[2])
-                            if moldcap_rigid_attr and moldcap_rigid_attr.IsValid():
-                                moldcap_rigid_attr.Set(False)
-
-                            moldcap_translate_attr.Set(new_translate)
-                            self._update_orientation_xy(moldcap_prim)
-
-                            if moldcap_rigid_attr and moldcap_rigid_attr.IsValid():
-                                moldcap_rigid_attr.Set(True)
-                    print(
-                        f"Updated moldcap translate to {new_translate} based on source {source_translate}"
-                    )                                
-                    """
                     if not self.mold_sg2_gripper_closed:
                         self.send_mold_sg2_gripper_command(True)
                         self.mold_sg2_gripper_closed = True
@@ -1622,3 +1622,4 @@ def compute(db: og.Database):
     if hasattr(db.per_instance_state, "controller"):
         db.per_instance_state.controller.step()
     return True
+
