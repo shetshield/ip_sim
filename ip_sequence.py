@@ -123,7 +123,7 @@ class DualRobotController:
         self.threshold_1 = -0.022 - 0.02*2.6; self.threshold_2 = -0.042
         self.hold_duration = 0.5
         self.up_vel_2 = 0.3
-        self.position_tolerance = 3e-3
+        self.position_tolerance = 1e-2
         self.table_joint = "Body_Table_p_joint"
         self.table_up_vel = 0.5
         self.table_stop_threshold = 0.3799
@@ -328,22 +328,6 @@ class DualRobotController:
             self.eef_waypoints.append((pos, q))
 
         return True
-    
-    def _is_eef_at_final_target(self, current_pos, current_q):
-        if self.final_eef_target is None or self.final_eef_orientation is None:
-            return False
-
-        current_pos = np.asarray(current_pos, dtype=float)
-        current_q = self._normalize_quat(current_q)
-        target_pos = np.asarray(self.final_eef_target, dtype=float)
-        target_q = self._normalize_quat(self.final_eef_orientation)
-
-        pos_error = np.linalg.norm(current_pos - target_pos)
-        ori_dot = abs(np.dot(current_q, target_q))
-        ori_dot = np.clip(ori_dot, -1.0, 1.0)
-        ori_error = 2.0 * np.arccos(ori_dot)
-
-        return pos_error <= self.position_tolerance and ori_error <= self.rotation_tolerance
 
     def _is_pose_within_tolerance(self, current_pos, target_pos, current_q=None, target_q=None):
         """Return True when the pose error is within the configured tolerances."""
@@ -352,8 +336,8 @@ class DualRobotController:
         target_pos = np.asarray(target_pos, dtype=float)
 
         pos_error = np.linalg.norm(current_pos - target_pos)
-        # print(f"current_pos: {current_pos}, target_pos: {target_pos}, pos_error: {pos_error}")
-        # print(f"tolerance: {self.position_tolerance}, {self.rotation_tolerance}")
+        print(f"current_pos: {current_pos}, target_pos: {target_pos}, pos_error: {pos_error}")
+        print(f"tolerance: {self.position_tolerance}, {self.rotation_tolerance}")
         if pos_error > self.position_tolerance:
             return False
 
@@ -368,6 +352,30 @@ class DualRobotController:
         # print(f"current_q: {current_q}, target_q: {target_q}, ori_error: {ori_error}")
 
         return ori_error <= self.rotation_tolerance
+
+    def _nudge_m1013_toward_pose(self, current_pos, target_pos, current_q=None, target_q=None):
+        """Apply a small corrective IK step toward the target pose."""
+
+        current_pos = np.asarray(current_pos, dtype=float)
+        target_pos = np.asarray(target_pos, dtype=float)
+
+        direction = target_pos - current_pos
+        distance = np.linalg.norm(direction)
+        if distance < 1e-9:
+            return False
+
+        direction /= distance
+        remaining = max(distance - self.position_tolerance, 0.0)
+
+        stage_mpu = self.stage_mpu if self.stage_mpu != 0 else 1.0
+        max_step = 0.02 / stage_mpu
+        min_step = self.position_tolerance * 0.25
+        step = np.clip(remaining, min_step, max_step)
+
+        corrective_target = current_pos + direction * step
+        orientation = target_q if target_q is not None else current_q
+
+        return self._solve_and_apply_m1013(corrective_target, orientation)
 
     def _prepare_eef_offset_waypoints(self, start_position, orientation):
         """After reaching the target pose, move an additional +0.3 m along Y from the current EEF position."""
