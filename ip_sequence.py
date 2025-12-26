@@ -123,7 +123,7 @@ class DualRobotController:
         self.threshold_1 = -0.022 - 0.02*2.6; self.threshold_2 = -0.042
         self.hold_duration = 0.5
         self.up_vel_2 = 0.3
-        self.position_tolerance = 1e-3
+        self.position_tolerance = 3e-3
         self.table_joint = "Body_Table_p_joint"
         self.table_up_vel = 0.5
         self.table_stop_threshold = 0.3799
@@ -345,6 +345,30 @@ class DualRobotController:
 
         return pos_error <= self.position_tolerance and ori_error <= self.rotation_tolerance
 
+    def _is_pose_within_tolerance(self, current_pos, target_pos, current_q=None, target_q=None):
+        """Return True when the pose error is within the configured tolerances."""
+
+        current_pos = np.asarray(current_pos, dtype=float)
+        target_pos = np.asarray(target_pos, dtype=float)
+
+        pos_error = np.linalg.norm(current_pos - target_pos)
+        # print(f"current_pos: {current_pos}, target_pos: {target_pos}, pos_error: {pos_error}")
+        # print(f"tolerance: {self.position_tolerance}, {self.rotation_tolerance}")
+        if pos_error > self.position_tolerance:
+            return False
+
+        if target_q is None or current_q is None:
+            return True
+
+        current_q = self._normalize_quat(current_q)
+        target_q = self._normalize_quat(target_q)
+        ori_dot = abs(np.dot(current_q, target_q))
+        ori_dot = np.clip(ori_dot, -1.0, 1.0)
+        ori_error = 2.0 * np.arccos(ori_dot)
+        # print(f"current_q: {current_q}, target_q: {target_q}, ori_error: {ori_error}")
+
+        return ori_error <= self.rotation_tolerance
+
     def _prepare_eef_offset_waypoints(self, start_position, orientation):
         """After reaching the target pose, move an additional +0.3 m along Y from the current EEF position."""
 
@@ -458,7 +482,13 @@ class DualRobotController:
             {"type": "move", "waypoints": self._interpolate_pose_waypoints(pre_pick_position, pick_orientation, final_pick_position, pick_orientation)},
             {"type": "move", "waypoints": self._interpolate_pose_waypoints(final_pick_position, pick_orientation, retreat_position, pick_orientation)},
             {"type": "move", "waypoints": self._interpolate_pose_waypoints(retreat_position, pick_orientation, post_pick_position, pick_orientation)},
-            {"type": "gripper", "close": True, "hold": self.hold_duration},
+            {
+                "type": "gripper",
+                "close": True,
+                "hold": self.hold_duration,
+                "target_position": post_pick_position,
+                "target_orientation": pick_orientation,
+            },
         ]
         self.current_subgoal_index = 0
         self.eef_waypoints = []
@@ -807,12 +837,22 @@ class DualRobotController:
         if subgoal["type"] == "gripper":
             if self.subgoal_started_at is None:
                 self.subgoal_started_at = time.time()
-                return
+
+            current_pos, current_q = self._get_current_m1013_pose()
+            target_pos = subgoal.get("target_position")
+            target_q = subgoal.get("target_orientation")
+
+            pose_reached = False
+            if current_pos is not None and target_pos is not None:
+                pose_reached = self._is_pose_within_tolerance(current_pos, target_pos, current_q, target_q)
 
             hold_time = subgoal.get("hold", self.hold_duration)
-            if (time.time() - self.subgoal_started_at) >= 3* hold_time:
-                self.current_subgoal_index += 1
+            elapsed = time.time() - self.subgoal_started_at
+            timeout = 3 * hold_time
+
+            if pose_reached or elapsed >= timeout:
                 self._set_m1013_gripper_state(subgoal.get("close", True))
+                self.current_subgoal_index += 1
                 self.subgoal_started_at = None
             return
 
