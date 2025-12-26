@@ -1105,10 +1105,12 @@ class DualRobotController:
     def _apply_gripper_action(self, joint_positions, joint_efforts=None):
         """Apply gripper commands while gracefully handling effort support differences."""
         try:
-            kwargs = {"joint_positions": np.array(joint_positions, dtype=float)}
             if joint_efforts is not None:
                 kwargs["joint_efforts"] = np.array(joint_efforts, dtype=float)
-            self.m1013_gripper_subset.apply_action(**kwargs)
+                self.m1013_gripper_subset.apply_action(**kwargs)
+            else:
+                kwargs = {"joint_positions": np.array(joint_positions, dtype=float)}
+                self.m1013_gripper_subset.apply_action(**kwargs)
         except TypeError:
             if joint_efforts is None:
                 raise
