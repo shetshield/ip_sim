@@ -1014,17 +1014,24 @@ class DualRobotController:
 
         effort_values = None
         try:
-            if hasattr(self.m1013_gripper_subset, "get_joint_efforts"):
-                effort_values = self.m1013_gripper_subset.get_joint_efforts()
-            elif hasattr(self.m1013_gripper_subset, "get_applied_joint_efforts"):
-                effort_values = self.m1013_gripper_subset.get_applied_joint_efforts()
+            # Isaac Sim 5.1 exposes articulation forces through the Physics Articulation Force API.
+            # SingleArticulation provides net/measured forces rather than `get_joint_efforts`.
+            for getter_name in (
+                "get_measured_joint_forces",  # Physics articulation sensor output
+                "get_net_joint_forces",       # Net forces from PhysX
+                "get_applied_joint_forces",   # Commanded/appplied drive forces
+                "get_applied_joint_efforts",  # Legacy name on older releases
+            ):
+                getter = getattr(self.m1013_gripper_subset, getter_name, None)
+                if callable(getter):
+                    effort_values = getter()
+                    break
         except Exception as exc:
             print(f"[M1013 Gripper] Failed to read joint efforts: {exc}")
             return
 
         if effort_values is None:
             print("[M1013 Gripper] Joint effort readings are not available on this platform.")
-            return
 
         effort_list = effort_values.tolist() if hasattr(effort_values, "tolist") else list(effort_values)
         if len(effort_list) != len(self.m1013_gripper_joint_names):
