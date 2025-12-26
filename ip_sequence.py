@@ -29,6 +29,14 @@ except ImportError:
     IS_INTERFACE_AVAILABLE = False
     sg_interface = None
 
+# [Effort Sensor Import]
+try:
+    from isaacsim.sensors.physics.scripts.effort_sensor import EffortSensor
+    EFFORT_SENSOR_AVAILABLE = True
+except ImportError:
+    EffortSensor = None
+    EFFORT_SENSOR_AVAILABLE = False
+
 class DualRobotController:
     def __init__(self):
         # ---------------------------------------------------------
@@ -97,6 +105,7 @@ class DualRobotController:
             "f3_p_joint": -0.02,
             "f4_p_joint": 0.02,
         }
+        self.m1013_gripper_close_effort = 10.0        
         self.m1013_gripper_open_effort = 0.0        
 
         self.final_eef_target = np.array([0, 1.03, 0.6])        
@@ -806,6 +815,7 @@ class DualRobotController:
 
     def _drive_m1013_to_final_pose(self):
         if self.eef_motion_finished:
+            self._log_m1013_gripper_efforts()
             return
 
         if not self._ensure_m1013_ik_solver():
@@ -858,7 +868,7 @@ class DualRobotController:
 
             if pose_reached or elapsed >= timeout:
                 self._set_m1013_gripper_state(subgoal.get("close", True))
-                self._log_m1013_gripper_efforts()                
+                self._log_m1013_gripper_efforts()
                 self.current_subgoal_index += 1
                 self.subgoal_started_at = None
             else:
