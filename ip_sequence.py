@@ -805,16 +805,14 @@ class DualRobotController:
             return
 
         if subgoal["type"] == "gripper":
-            self._set_m1013_gripper_state(subgoal.get("close", True))
-
             if self.subgoal_started_at is None:
-                self.send_gripper_command(subgoal.get("close", True))
                 self.subgoal_started_at = time.time()
                 return
 
             hold_time = subgoal.get("hold", self.hold_duration)
-            if (time.time() - self.subgoal_started_at) >= hold_time:
+            if (time.time() - self.subgoal_started_at) >= 3* hold_time:
                 self.current_subgoal_index += 1
+                self._set_m1013_gripper_state(subgoal.get("close", True))
                 self.subgoal_started_at = None
             return
 
@@ -898,7 +896,7 @@ class DualRobotController:
                 moldcap_translate = moldcap_translate_attr.Get()
 
                 if moldcap_translate is not None:
-                    new_translate = Gf.Vec3d(moldcap_translate[0], 1453.0, moldcap_translate[2])
+                    new_translate = Gf.Vec3d(1303.95924, 1453.0, 2101.04076)
                     if rigid_attr and rigid_attr.IsValid():
                         rigid_attr.Set(False)
 
