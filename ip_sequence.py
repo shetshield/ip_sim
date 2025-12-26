@@ -856,12 +856,18 @@ class DualRobotController:
 
             hold_time = subgoal.get("hold", self.hold_duration)
             elapsed = time.time() - self.subgoal_started_at
-            timeout = 3 * hold_time
+            timeout = 5 * hold_time
 
             if pose_reached or elapsed >= timeout:
                 self._set_m1013_gripper_state(subgoal.get("close", True))
                 self.current_subgoal_index += 1
                 self.subgoal_started_at = None
+            else:
+                # Apply a small corrective IK step toward the target pose while waiting.
+                # This helps close out residual errors when the final waypoint stops
+                # slightly outside the position tolerance.
+                if current_pos is not None and target_pos is not None:
+                    self._nudge_m1013_toward_pose(current_pos, target_pos, current_q, target_q)
             return
 
     def reset_logic(self):
