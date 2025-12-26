@@ -97,6 +97,7 @@ class DualRobotController:
             "f3_p_joint": -0.02,
             "f4_p_joint": 0.02,
         }
+        self.m1013_gripper_open_effort = 0.0        
 
         self.final_eef_target = np.array([0, 1.03, 0.6])        
         self.final_eef_orientation = None
@@ -897,16 +898,18 @@ class DualRobotController:
         self.m1013_ik_solver = None
         self.m1013_art_kin_solver = None
         self.m1013_ik_unavailable_notified = False
-        self._m1013_effort_unavailable_logged = False        
+        self._m1013_effort_unavailable_logged = False
+        self._m1013_gripper_effort_apply_failed = False
+        self._m1013_gripper_apply_failed = False
         self.eef_waypoints = []
         self.eef_motion_started = False
         self.eef_motion_finished = False
         self.eef_motion_phase = 1
-        self.final_eef_target = None        
+        self.final_eef_target = None
         self.final_eef_orientation = None
         self.eef_subgoals = []
         self.current_subgoal_index = 0
-        self.subgoal_started_at = None        
+        self.subgoal_started_at = None
         self._apply_m1013_default_configuration()
 
         self._set_lid_assy_damping(1e3)
@@ -995,18 +998,49 @@ class DualRobotController:
             if attr: attr.Set(0)
 
     def _set_m1013_gripper_state(self, close: bool):
-        """Position-control the M1013 prismatic gripper joints for open/close states."""
+        """Control the M1013 prismatic gripper with position + effort for tighter graspes."""
         if not self.m1013_robot.handles_initialized:
             return
 
         targets = []
+        efforts = []
         for joint_name in self.m1013_gripper_joint_names:
             if close:
                 targets.append(self.m1013_gripper_close_targets.get(joint_name, 0.0))
+                efforts.append(self.m1013_gripper_close_effort)
             else:
                 targets.append(self.m1013_gripper_open_targets.get(joint_name, 0.0))
+                efforts.append(self.m1013_gripper_open_effort)
 
-        self.m1013_gripper_subset.apply_action(joint_positions=np.array(targets, dtype=float))
+        self._apply_gripper_action(targets, efforts)
+
+    def _apply_gripper_action(self, joint_positions, joint_efforts=None):
+        """Apply gripper commands while gracefully handling effort support differences."""
+        try:
+            kwargs = {"joint_positions": np.array(joint_positions, dtype=float)}
+            if joint_efforts is not None:
+                kwargs["joint_efforts"] = np.array(joint_efforts, dtype=float)
+            self.m1013_gripper_subset.apply_action(**kwargs)
+        except TypeError:
+            if joint_efforts is None:
+                raise
+
+            # Retry without efforts on platforms where joint_efforts is not supported.
+            try:
+                self.m1013_gripper_subset.apply_action(
+                    joint_positions=np.array(joint_positions, dtype=float)
+                )
+                if not self._m1013_gripper_effort_apply_failed:
+                    print("[M1013 Gripper] joint_efforts not supported; applied position-only command.")
+                    self._m1013_gripper_effort_apply_failed = True
+            except Exception as exc:
+                if not self._m1013_gripper_apply_failed:
+                    print(f"[M1013 Gripper] Failed to apply gripper action: {exc}")
+                    self._m1013_gripper_apply_failed = True
+        except Exception as exc:
+            if not self._m1013_gripper_apply_failed:
+                print(f"[M1013 Gripper] Failed to apply gripper action: {exc}")
+                self._m1013_gripper_apply_failed = True
 
     def _log_m1013_gripper_efforts(self):
         """Log the current efforts for the M1013 gripper joints for debugging."""
