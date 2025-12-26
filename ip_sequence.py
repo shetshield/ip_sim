@@ -7,6 +7,7 @@ import time
 from pxr import Gf, Usd, UsdGeom
 import inspect
 
+# [Robot Articulation Import]
 try:
     from isaacsim.robot_motion.motion_generation import ArticulationKinematicsSolver, LulaKinematicsSolver
     LULA_IK_AVAILABLE = True
@@ -36,6 +37,7 @@ try:
 except ImportError:
     EffortSensor = None
     EFFORT_SENSOR_AVAILABLE = False
+
 
 class DualRobotController:
     def __init__(self):
@@ -105,11 +107,13 @@ class DualRobotController:
             "f3_p_joint": -0.02,
             "f4_p_joint": 0.02,
         }
-        self.m1013_gripper_close_effort = 10.0        
-        self.m1013_gripper_open_effort = 0.0        
+        self.m1013_gripper_close_effort = 10.0
+        self.m1013_gripper_open_effort = 0.0
+        self._m1013_gripper_effort_sensors_initialized = False
+        self.m1013_gripper_effort_sensors = {}
+        self.m1013_gripper_effort_print_interval = 0.1
+        self._last_m1013_effort_print_time = None
 
-        self.final_eef_target = np.array([0, 1.03, 0.6])        
-        self.final_eef_orientation = None
         self.eef_path_steps = 20
         self.eef_waypoints = []
         self.eef_motion_started = False
@@ -815,7 +819,7 @@ class DualRobotController:
 
     def _drive_m1013_to_final_pose(self):
         if self.eef_motion_finished:
-            self._log_m1013_gripper_efforts()
+            self._print_m1013_gripper_joint_efforts(prefix=">>> [Cylinder mold holds]")
             return
 
         if not self._ensure_m1013_ik_solver():
@@ -920,6 +924,9 @@ class DualRobotController:
         self.eef_subgoals = []
         self.current_subgoal_index = 0
         self.subgoal_started_at = None
+        self._m1013_gripper_effort_sensors_initialized = False
+        self.m1013_gripper_effort_sensors = {}
+        self._last_m1013_effort_print_time = None
         self._apply_m1013_default_configuration()
 
         self._set_lid_assy_damping(1e3)
@@ -1006,6 +1013,77 @@ class DualRobotController:
         if prim.IsValid():
             attr = prim.GetAttribute("physxRigidBody:lockedPosAxis")
             if attr: attr.Set(0)
+
+    def _find_joint_prim_path(self, root_path: str, joint_name: str):
+        """Return the prim path for a joint prim named joint_name under root_path (fallback to stage-wide search)."""
+        if self.stage is None:
+            return None
+
+        root_prim = self.stage.GetPrimAtPath(root_path)
+        if root_prim.IsValid():
+            for prim in Usd.PrimRange(root_prim):
+                if prim.GetName() == joint_name:
+                    return str(prim.GetPath())
+
+        for prim in self.stage.Traverse():
+            if prim.GetName() == joint_name:
+                return str(prim.GetPath())
+
+        return None
+
+    def _ensure_m1013_gripper_effort_sensors(self):
+        """Create effort sensors for each gripper joint exactly once (lazy init)."""
+        if getattr(self, "_m1013_gripper_effort_sensors_initialized", False):
+            return
+        self._m1013_gripper_effort_sensors_initialized = True
+
+        if not EFFORT_SENSOR_AVAILABLE or EffortSensor is None:
+            print("[EffortSensor] EffortSensor import 실패: isaacsim.sensors.physics extension 활성화 필요")
+            return
+
+        self.m1013_gripper_effort_sensors = {}
+        for joint_name in self.m1013_gripper_joint_names:
+            joint_prim_path = self._find_joint_prim_path(self.m1013_root_prim, joint_name)
+            if not joint_prim_path:
+                print(f"[EffortSensor] Joint prim not found: {joint_name} (root={self.m1013_root_prim})")
+                continue
+
+            try:
+                self.m1013_gripper_effort_sensors[joint_name] = EffortSensor(
+                    prim_path=joint_prim_path,
+                    sensor_period=-1,
+                    use_latest_data=False,
+                    enabled=True,
+                )
+                print(f"[EffortSensor] Created: {joint_name} -> {joint_prim_path}")
+            except Exception as exc:
+                print(f"[EffortSensor] Failed to create sensor for {joint_name} at {joint_prim_path}: {exc}")
+
+    def _print_m1013_gripper_joint_efforts(self, prefix: str = "[M1013 Gripper Effort]"):
+        """Print effort for each gripper joint with optional rate limiting."""
+        self._ensure_m1013_gripper_effort_sensors()
+        if not getattr(self, "m1013_gripper_effort_sensors", None):
+            return
+
+        now = time.time()
+        if (
+            self._last_m1013_effort_print_time is not None
+            and self.m1013_gripper_effort_print_interval is not None
+        ):
+            if now - self._last_m1013_effort_print_time < self.m1013_gripper_effort_print_interval:
+                return
+        self._last_m1013_effort_print_time = now
+
+        parts = []
+        for joint_name, sensor in self.m1013_gripper_effort_sensors.items():
+            reading = sensor.get_sensor_reading(use_latest_data=True)
+            if getattr(reading, "is_valid", False):
+                parts.append(f"{joint_name}={float(reading.value):.4f}")
+            else:
+                parts.append(f"{joint_name}=NaN")
+
+        if parts:
+            print(prefix + " " + ", ".join(parts))
 
     def _set_m1013_gripper_state(self, close: bool):
         """Control the M1013 prismatic gripper with position + effort for tighter graspes."""
