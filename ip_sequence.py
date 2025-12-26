@@ -864,10 +864,14 @@ class DualRobotController:
                 self.subgoal_started_at = None
             else:
                 # Apply a small corrective IK step toward the target pose while waiting.
-                # This helps close out residual errors when the final waypoint stops
-                # slightly outside the position tolerance.
+                # First, try to drive directly to the exact target pose to quickly
+                # reduce positional error. If that fails (e.g., IK does not
+                # converge), fall back to a smaller nudge step to avoid stalling
+                # near the goal.
                 if current_pos is not None and target_pos is not None:
-                    self._nudge_m1013_toward_pose(current_pos, target_pos, current_q, target_q)
+                    solved = self._solve_and_apply_m1013(target_pos, target_q)
+                    if not solved:
+                        self._nudge_m1013_toward_pose(current_pos, target_pos, current_q, target_q)
             return
 
     def reset_logic(self):
